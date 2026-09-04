@@ -1,0 +1,28 @@
+[project]
+name = "asvet-antispam-bot"
+version = "0.1.0"
+description = "Антиспам-бот для Telegram-чата про AI и автоматизацию в бизнесе"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "alarmic" }
+]
+dependencies = [
+    "aiogram>=3.13,<4",
+    "aiosqlite>=0.20",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+asvet-bot = "bot.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["bot"]
+
+[tool.uv]
+package = true

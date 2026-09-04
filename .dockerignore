@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[od]
+*.so
+*.egg-info/
+.venv/
+.venv.stale/
+.uv-cache/
+dist/
+build/
+
+# Окружение
+.env
+.env.local
+.env.*.local
+.env.example
+
+# Локальные артефакты
+data/
+logs/
+*.log
+_trash_*
+_*.bak
+_*.stale
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# VCS
+.git/
+.gitignore

@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.venv/
+.venv.stale/
+.venv.bak/
+.uv-cache/
+dist/
+build/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# База и данные
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Логи
+*.log
+logs/
+
+# SSH-ключи и локальные артефакты (НИКОГДА не коммитить)
+*.pub
+github_ssh_key*
+_trash_*
+_*.bak
+_*.stale
+
+# Одноразовые отладочные скрипты
+debug_*.py
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

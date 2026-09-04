@@ -1,0 +1,16 @@
+# Для локального теста контейнера или альтернативного деплоя через
+# Coolify → "Docker Compose". Coolify сам подхватит этот файл.
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asvet-antispam
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Хранилище БД. В Coolify этот путь можно заменить на named-volume.
+      - ./data:/app/data
+    # Бот не слушает порты, polling к Telegram. Поэтому ports: не нужны.

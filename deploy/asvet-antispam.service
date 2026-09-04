@@ -1,0 +1,28 @@
+[Unit]
+Description=ASVET Antispam Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=asvet
+Group=asvet
+WorkingDirectory=/opt/asvet-antispam
+Environment="PATH=/opt/asvet-antispam/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+EnvironmentFile=/opt/asvet-antispam/.env
+ExecStart=/opt/asvet-antispam/.venv/bin/python -m bot
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=asvet-antispam
+
+# Жёстче с безопасностью
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/asvet-antispam/data /opt/asvet-antispam/logs
+
+[Install]
+WantedBy=multi-user.target
