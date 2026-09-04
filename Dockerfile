@@ -8,7 +8,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 # Копируем только манифест и код для установки зависимостей
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 COPY bot/ ./bot/
 RUN uv sync --no-dev
 
