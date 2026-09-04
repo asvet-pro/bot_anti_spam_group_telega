@@ -1,16 +1,29 @@
-# Для локального теста контейнера или альтернативного деплоя через
-# Coolify → "Docker Compose". Coolify сам подхватит этот файл.
-
 services:
-  bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: asvet-antispam
+  asvet-antispam:
+    build: .
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN:-}
+      - CHAT_ID=${CHAT_ID:-}
+      - ADMIN_IDS=${ADMIN_IDS:-}
+      - SOCKS5_URL=${SOCKS5_URL:-}
+      - BANNED_PATTERNS=${BANNED_PATTERNS:-}
+      - MIN_ACCOUNT_AGE_DAYS=${MIN_ACCOUNT_AGE_DAYS:-7}
+      - FLOOD_MAX_MESSAGES=${FLOOD_MAX_MESSAGES:-5}
+      - FLOOD_WINDOW_SECONDS=${FLOOD_WINDOW_SECONDS:-10}
+      - CAPTCHA_TIMEOUT_SECONDS=${CAPTCHA_TIMEOUT_SECONDS:-120}
+      - DB_PATH=${DB_PATH:-/app/data/bot.db}
     restart: unless-stopped
-    env_file:
-      - .env
+    networks:
+      - proxy-shared
     volumes:
-      # Хранилище БД. В Coolify этот путь можно заменить на named-volume.
-      - ./data:/app/data
-    # Бот не слушает порты, polling к Telegram. Поэтому ports: не нужны.
+      - asvet-bot-data:/app/data
+
+volumes:
+  asvet-bot-data:
+    external: true
+    name: asvet-bot-data
+
+networks:
+  proxy-shared:
+    external: true
+    name: proxy-shared
