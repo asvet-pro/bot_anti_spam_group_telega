@@ -3,15 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import sys
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
+from bot import proxy
 from bot.config import load_settings
 from bot.db import Database
 from bot.filters.admin import AdminFilter
@@ -41,13 +42,15 @@ async def main() -> None:
     settings = load_settings()
     logger.info("Settings loaded: chat_id=%s admin_ids=%s", settings.chat_id, settings.admin_ids)
 
-    # Если задан SOCKS5_URL — все HTTP-запросы aiogram пойдут через него.
-    # Используется для обхода блокировок Telegram через sidecar (london-proxy).
-    socks5_url = os.getenv("SOCKS5_URL", "").strip() or None
+    # Если задан VLESS_URL — поднимаем локальный SOCKS5 через sing-box.
+    vless_url = proxy.vless_url_from_env()
+    singbox_proc: asyncio.subprocess.Process | None = None
     session: AiohttpSession | None = None
-    if socks5_url:
-        session = AiohttpSession(proxy=socks5_url)
-        logger.info("Bot will use SOCKS5 proxy: %s", socks5_url)
+    if vless_url:
+        singbox_proc = await proxy.start_singbox(vless_url)
+        # aiogram 3.x принимает proxy как строку; aiohttp-socks добавит поддержку SOCKS5.
+        session = AiohttpSession(proxy=proxy.socks_url())
+        logger.info("Bot will use SOCKS5 proxy: %s", proxy.socks_url())
 
     db = Database(settings.db_path)
     await db.init()
@@ -101,6 +104,8 @@ async def main() -> None:
         except asyncio.CancelledError:
             pass
         await bot.session.close()
+        if singbox_proc is not None:
+            await proxy.stop_singbox(singbox_proc)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

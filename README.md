@@ -166,22 +166,6 @@ Run polling for bot @asvet_probot
 
 Каждый `git push` → Coolify сам пересоберёт и перезапустит контейнер. Никаких ручных `docker pull` / `systemctl restart`.
 
-### Шаг 5. Если Telegram заблокирован на сервере (london-proxy)
-
-Если `api.telegram.org` недоступен с VPS (типично для российских хостингов), подними рядом sidecar `london-proxy` — это отдельный контейнер с sing-box + VLESS, который проксирует трафик бота в Telegram.
-
-Архитектура: оба контейнера в общей Docker-сети, бот ходит в `socks5://london-proxy:1080`.
-
-1. **Задеплой `london-proxy`** (отдельный репо): см. https://github.com/asvet-pro/london-proxy
-   - Standalone Docker app, env: `VLESS_URL=vless://...`
-2. **Подключи оба app к общей сети** в Coolify: Configuration → Connect to Predefined Network (`proxy-shared`).
-3. **В боте**: добавь env `SOCKS5_URL=socks5://london-proxy:1080` (вместо старого `VLESS_URL`).
-4. Передеплой бота. В логах:
-   ```
-   Bot will use SOCKS5 proxy: socks5://london-proxy:1080
-   Run polling for bot @asvet_probot
-   ```
-
 ## Обновление (VPS-вариант)
 
 ```bash
