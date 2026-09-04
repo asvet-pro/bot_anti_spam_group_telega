@@ -4,7 +4,7 @@ FROM python:3.12-slim AS deps
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # uv ставим один раз
 RUN pip install --no-cache-dir uv
@@ -22,16 +22,6 @@ WORKDIR /app
 # uv во втором этапе (он маленький, но нужен для `CMD`)
 RUN pip install --no-cache-dir uv
 
-# sing-box (для VLESS-обхода блокировок Telegram).
-# Без него бот не сможет достучаться до api.telegram.org на заблокированных хостингах.
-ARG SING_VERSION=1.12.22
-RUN apt-get update && apt-get install -y --no-install-recommends curl tar ca-certificates \
-    && curl -fsSL -o /tmp/sing-box.tar.gz https://github.com/SagerNet/sing-box/releases/download/v${SING_VERSION}/sing-box-${SING_VERSION}-linux-amd64.tar.gz \
-    && tar -xzf /tmp/sing-box.tar.gz -C /tmp \
-    && mv /tmp/sing-box-${SING_VERSION}-linux-amd64/sing-box /usr/local/bin/sing-box \
-    && chmod +x /usr/local/bin/sing-box \
-    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/sing-box.tar.gz /tmp/sing-box-${SING_VERSION}-linux-amd64
-
 # Копируем уже установленное окружение из первого этапа
 COPY --from=deps /app /app
 
@@ -44,7 +34,7 @@ VOLUME ["/app/data"]
 #   CHAT_ID
 #   ADMIN_IDS
 # (опционально: MIN_ACCOUNT_AGE_DAYS, FLOOD_*, CAPTCHA_*, BANNED_PATTERNS, DB_PATH,
-#  VLESS_URL — если Telegram заблокирован на сервере)
+#  SOCKS5_URL — если Telegram заблокирован на сервере, и есть sidecar типа london-proxy)
 # Coolify подхватит их из настроек ресурса.
 
 # Логи — в stdout/stderr, чтобы Coolify их видел.
