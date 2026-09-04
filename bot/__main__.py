@@ -11,7 +11,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiohttp_socks import ProxyConnector
 
 from bot import proxy
 from bot.config import load_settings
@@ -30,7 +29,7 @@ def _setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%%Y-%m-%d %H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     # aiogram сам шумит, приглушим
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
@@ -49,9 +48,8 @@ async def main() -> None:
     session: AiohttpSession | None = None
     if vless_url:
         singbox_proc = await proxy.start_singbox(vless_url)
-        session = AiohttpSession(
-            connector=ProxyConnector.from_url(proxy.socks_url())
-        )
+        # aiogram 3.x принимает proxy как строку; aiohttp-socks добавит поддержку SOCKS5.
+        session = AiohttpSession(proxy=proxy.socks_url())
         logger.info("Bot will use SOCKS5 proxy: %s", proxy.socks_url())
 
     db = Database(settings.db_path)
