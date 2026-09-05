@@ -25,6 +25,9 @@ from bot.handlers import messages as messages_handlers
 from bot.middlewares.deps import DependencyMiddleware
 
 
+# Auto-deploy via Coolify webhook (configured 2026-09-04).
+
+
 def _setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
