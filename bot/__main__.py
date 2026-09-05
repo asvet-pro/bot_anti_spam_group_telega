@@ -21,6 +21,7 @@ from bot.filters.new_account import NewAccountCheck
 from bot.filters.spam import SpamFilter
 from bot.handlers import admin as admin_handlers
 from bot.handlers import captcha as captcha_handlers
+from bot.handlers import help as help_handlers
 from bot.handlers import messages as messages_handlers
 from bot.middlewares.deps import DependencyMiddleware
 
@@ -86,8 +87,9 @@ async def main() -> None:
         DependencyMiddleware(settings, db, new_account, flood, spam, admin)
     )
 
-    # Порядок важен: админ-команды (в ЛС) → капча → всё остальное.
+    # Порядок важен: /help и /start (ЛС) → админ-команды (ЛС) → капча → всё остальное.
     # Капча слушает F.new_chat_members, антиспам — обычные сообщения.
+    dp.include_router(help_handlers.router)
     dp.include_router(admin_handlers.router)
     dp.include_router(captcha_handlers.router)
     dp.include_router(messages_handlers.router)

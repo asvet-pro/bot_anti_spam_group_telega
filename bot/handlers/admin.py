@@ -28,24 +28,6 @@ def _is_admin(message: types.Message, admin: AdminFilter) -> bool:
     return admin.is_admin(message.from_user)
 
 
-@router.message(Command("start", "help"))
-async def cmd_help(
-    message: types.Message, admin: AdminFilter,
-) -> None:
-    if not _is_admin(message, admin):
-        return
-    await message.answer(
-        "🤖 Команды бота (только для админов):\n\n"
-        "/ban @user [причина] — бан навсегда\n"
-        "/tban @user <мин> [причина] — временный бан\n"
-        "/unban @user — разбан\n"
-        "/whitelist_add @user — в белый список\n"
-        "/whitelist_del @user — из белого списка\n"
-        "/stats — статистика\n"
-        "/id — показать chat.id и user.id (в чате)\n"
-    )
-
-
 @router.message(Command("ban"))
 async def cmd_ban(
     message: types.Message, bot: Bot, settings: Settings,
