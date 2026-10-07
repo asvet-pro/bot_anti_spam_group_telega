@@ -33,6 +33,19 @@ echo "==> Подтягиваю зависимости через uv"
 cd "$APP_DIR"
 sudo -u "$APP_USER" uv sync --no-dev
 
+echo "==> Собираю ML-модель (одноразово, +3 мин)"
+# Ставим export-зависимости (transformers + optimum + torch + onnx),
+# скачиваем модель с HuggingFace и конвертим в ONNX.
+# HF_HOME указываем в рабочий каталог, чтобы не падало при недоступном
+# /root/.cache/huggingface.
+sudo -u "$APP_USER" uv sync --extra export
+sudo -u "$APP_USER" env HF_HOME="$APP_DIR/.hf-cache" \
+  uv run python scripts/export_onnx.py
+# Возвращаемся к тонкому прод-окружению (без torch/optimum)
+# и чистим кеши, чтобы не оставлять мусор.
+sudo -u "$APP_USER" uv sync --no-dev
+rm -rf "$APP_DIR/.hf-cache" "$APP_DIR/.uv-cache"
+
 echo "==> Создаю data/ и logs/"
 mkdir -p "$APP_DIR/data" "$APP_DIR/logs"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR/data" "$APP_DIR/logs"
