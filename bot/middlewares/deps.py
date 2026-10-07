@@ -9,7 +9,9 @@ from aiogram.types import TelegramObject
 from bot.config import Settings
 from bot.db import Database
 from bot.filters.admin import AdminFilter
+from bot.filters.blocklist import BlocklistFilter
 from bot.filters.flood import FloodCheck
+from bot.filters.ml_spam import MLSpamCheck
 from bot.filters.new_account import NewAccountCheck
 from bot.filters.spam import SpamFilter
 
@@ -23,6 +25,8 @@ class DependencyMiddleware(BaseMiddleware):
         flood: FloodCheck,
         spam: SpamFilter,
         admin: AdminFilter,
+        ml_spam: MLSpamCheck,
+        blocklist: BlocklistFilter,
     ) -> None:
         self.settings = settings
         self.db = db
@@ -30,6 +34,8 @@ class DependencyMiddleware(BaseMiddleware):
         self.flood = flood
         self.spam = spam
         self.admin = admin
+        self.ml_spam = ml_spam
+        self.blocklist = blocklist
 
     async def __call__(
         self,
@@ -43,4 +49,6 @@ class DependencyMiddleware(BaseMiddleware):
         data["flood"] = self.flood
         data["spam"] = self.spam
         data["admin"] = self.admin
+        data["ml_spam"] = self.ml_spam
+        data["blocklist"] = self.blocklist
         return await handler(event, data)

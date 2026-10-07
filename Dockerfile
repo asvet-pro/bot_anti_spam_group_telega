@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# --- Этап 1: зависимости (кешируется отдельно) ---
+# --- Этап 1: зависимости + экспорт ONNX-модели (кешируется отдельно) ---
 FROM python:3.12-slim AS deps
 
 WORKDIR /app
@@ -12,7 +12,23 @@ RUN pip install --no-cache-dir uv
 # Копируем только манифест и код для установки зависимостей
 COPY pyproject.toml README.md ./
 COPY bot/ ./bot/
+COPY scripts/ ./scripts/
+
+# 1) Базовые прод-зависимости (без export).
 RUN uv sync --no-dev
+
+# 2) Добавляем export-зависимости (transformers + optimum + torch + onnx),
+#    скачиваем модель с HF и конвертируем в ONNX.
+#    HF_HOME указываем на /app/.hf-cache, чтобы не падало при недоступном
+#    /root/.cache/huggingface в окружениях с read-only HOME.
+ENV HF_HOME=/app/.hf-cache \
+    TRANSFORMERS_CACHE=/app/.hf-cache
+RUN uv sync --extra export
+RUN uv run python scripts/export_onnx.py && \
+    # 3) Возвращаемся к тонкому прод-окружению (без torch/optimum).
+    uv sync --no-dev && \
+    # 4) Чистим кеши HF и uv, чтобы не тащить их в финальный образ.
+    rm -rf /app/.hf-cache /app/.uv-cache
 
 # --- Этап 2: финальный образ ---
 FROM python:3.12-slim
@@ -32,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl tar ca-cer
     && chmod +x /usr/local/bin/sing-box \
     && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/sing-box.tar.gz /tmp/sing-box-${SING_VERSION}-linux-amd64
 
-# Копируем уже установленное окружение из первого этапа
+# Копируем уже установленное окружение + модель из первого этапа
 COPY --from=deps /app /app
 
 # Папка для SQLite. Coolify сюда монтирует volume.
@@ -44,6 +60,7 @@ VOLUME ["/app/data"]
 #   CHAT_ID
 #   ADMIN_IDS
 # (опционально: MIN_ACCOUNT_AGE_DAYS, FLOOD_*, CAPTCHA_*, BANNED_PATTERNS, DB_PATH,
+#  ML_ENABLED, ML_MODEL_DIR, ML_THRESHOLD, ML_BAD_LABELS — для ML-фильтра,
 #  VLESS_URL — если Telegram заблокирован на сервере)
 # Coolify подхватит их из настроек ресурса.
 

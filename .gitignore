@@ -7,6 +7,7 @@ __pycache__/
 .venv.stale/
 .venv.bak/
 .uv-cache/
+.hf-cache/
 dist/
 build/
 
@@ -20,6 +21,10 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+
+# ML-модели (пересобираются при деплое через scripts/export_onnx.py
+# или при сборке Docker-образа).
+models/
 
 # Логи
 *.log

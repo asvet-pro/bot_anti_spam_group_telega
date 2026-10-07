@@ -16,14 +16,18 @@ from bot import proxy
 from bot.config import load_settings
 from bot.db import Database
 from bot.filters.admin import AdminFilter
+from bot.filters.blocklist import BlocklistFilter
 from bot.filters.flood import FloodCheck
+from bot.filters.ml_spam import DEFAULT_BAD_LABELS, MLSpamCheck
 from bot.filters.new_account import NewAccountCheck
 from bot.filters.spam import SpamFilter
 from bot.handlers import admin as admin_handlers
+from bot.handlers import blocklist as blocklist_handlers
 from bot.handlers import captcha as captcha_handlers
 from bot.handlers import help as help_handlers
 from bot.handlers import messages as messages_handlers
 from bot.middlewares.deps import DependencyMiddleware
+from bot.model_runtime import MLSpamClassifier
 
 
 # Auto-deploy via Coolify webhook (configured 2026-09-04).
@@ -69,6 +73,37 @@ async def main() -> None:
     spam = SpamFilter(patterns=settings.banned_patterns)
     admin = AdminFilter(admin_ids=settings.admin_ids)
 
+    # ML-фильтр: загружаем модель, если включено. При любой ошибке —
+    # переходим в режим «только regex», не валим процесс.
+    ml_classifier: MLSpamClassifier | None = None
+    if settings.ml_enabled:
+        if settings.ml_model_dir.exists():
+            try:
+                ml_classifier = MLSpamClassifier(settings.ml_model_dir)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Не удалось загрузить ML модель из %s: %s. "
+                    "Работаем только по regex-паттернам.",
+                    settings.ml_model_dir, e,
+                )
+        else:
+            logger.warning(
+                "ML включён, но каталог %s не найден. "
+                "Запусти scripts/export_onnx.py или собери Docker-образ. "
+                "Работаем только по regex-паттернам.",
+                settings.ml_model_dir,
+            )
+    else:
+        logger.info("ML выключен (ML_ENABLED=false). Только regex.")
+
+    bad_labels = settings.ml_bad_labels or DEFAULT_BAD_LABELS
+    ml_spam = MLSpamCheck(
+        classifier=ml_classifier,
+        threshold=settings.ml_threshold,
+        bad_labels=bad_labels,
+    )
+    blocklist = BlocklistFilter(db=db)
+
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -78,19 +113,26 @@ async def main() -> None:
 
     # Мидлварь: инжектим зависимости
     dp.message.middleware(
-        DependencyMiddleware(settings, db, new_account, flood, spam, admin)
+        DependencyMiddleware(
+            settings, db, new_account, flood, spam, admin, ml_spam, blocklist
+        )
     )
     dp.callback_query.middleware(
-        DependencyMiddleware(settings, db, new_account, flood, spam, admin)
+        DependencyMiddleware(
+            settings, db, new_account, flood, spam, admin, ml_spam, blocklist
+        )
     )
     dp.chat_member.middleware(
-        DependencyMiddleware(settings, db, new_account, flood, spam, admin)
+        DependencyMiddleware(
+            settings, db, new_account, flood, spam, admin, ml_spam, blocklist
+        )
     )
 
-    # Порядок важен: /help и /start (ЛС) → админ-команды (ЛС) → капча → всё остальное.
+    # Порядок важен: /help и /start (ЛС) → админ-команды + blocklist (ЛС) → капча → всё остальное.
     # Капча слушает F.new_chat_members, антиспам — обычные сообщения.
     dp.include_router(help_handlers.router)
     dp.include_router(admin_handlers.router)
+    dp.include_router(blocklist_handlers.router)
     dp.include_router(captcha_handlers.router)
     dp.include_router(messages_handlers.router)
 

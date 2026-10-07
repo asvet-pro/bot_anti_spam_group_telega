@@ -6,9 +6,11 @@
 - флуд-окна (id, временные метки)
 - счётчики событий для /stats
 - белый список (кто освобождён от фильтров)
+- стоп-лист (слова и regex-паттерны, управляются через /help в ЛС)
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +62,24 @@ CREATE TABLE IF NOT EXISTS deleted_msgs (
     chat_id INTEGER NOT NULL,
     ts      REAL    NOT NULL
 );
+
+-- Управляемый стоп-лист: простые слова (подстрочный поиск, регистр игнорируется).
+CREATE TABLE IF NOT EXISTS blocklist_words (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    word    TEXT    NOT NULL UNIQUE,
+    note    TEXT,
+    by      INTEGER,
+    created REAL    NOT NULL
+);
+
+-- Управляемый стоп-лист: regex-паттерны (как в BANNED_PATTERNS).
+CREATE TABLE IF NOT EXISTS blocklist_patterns (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern TEXT    NOT NULL UNIQUE,
+    note    TEXT,
+    by      INTEGER,
+    created REAL    NOT NULL
+);
 """
 
 
@@ -69,6 +89,24 @@ class CaptchaChallenge:
     chat_id: int
     message_id: int
     deadline: float
+
+
+@dataclass(slots=True)
+class BlocklistWord:
+    id: int
+    word: str
+    note: str | None
+    by: int | None
+    created: float
+
+
+@dataclass(slots=True)
+class BlocklistPattern:
+    id: int
+    pattern: str
+    note: str | None
+    by: int | None
+    created: float
 
 
 class Database:
@@ -231,6 +269,127 @@ class Database:
                 "SELECT 1 FROM whitelist WHERE user_id = ?", (user_id,)
             ) as cur:
                 return (await cur.fetchone()) is not None
+
+    # ---------- blocklist (words) ----------
+
+    async def add_word(
+        self, word: str, note: str | None = None, by: int | None = None,
+    ) -> BlocklistWord:
+        """Добавляет слово. Возвращает запись. Бросает aiosqlite.IntegrityError
+        на дубликат (UNIQUE constraint)."""
+        word_clean = word.strip().lower()
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(
+                "INSERT INTO blocklist_words(word, note, by, created) "
+                "VALUES (?, ?, ?, ?)",
+                (word_clean, note, by, time.time()),
+            )
+            await db.commit()
+            new_id = cur.lastrowid
+        return BlocklistWord(
+            id=int(new_id), word=word_clean, note=note, by=by, created=time.time()
+        )
+
+    async def delete_word(self, key: str | int) -> BlocklistWord | None:
+        """Удаляет слово по id или по точному тексту. Возвращает удалённую запись."""
+        async with aiosqlite.connect(self.path) as db:
+            if isinstance(key, int):
+                cur = await db.execute(
+                    "SELECT id, word, note, by, created FROM blocklist_words WHERE id = ?",
+                    (key,),
+                )
+            else:
+                cur = await db.execute(
+                    "SELECT id, word, note, by, created FROM blocklist_words "
+                    "WHERE word = ?",
+                    (key.strip().lower(),),
+                )
+            row = await cur.fetchone()
+            if not row:
+                return None
+            entry = BlocklistWord(*row)
+            await db.execute(
+                "DELETE FROM blocklist_words WHERE id = ?", (entry.id,)
+            )
+            await db.commit()
+            return entry
+
+    async def list_words(self) -> list[BlocklistWord]:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(
+                "SELECT id, word, note, by, created FROM blocklist_words "
+                "ORDER BY id"
+            )
+            rows = await cur.fetchall()
+            return [BlocklistWord(*r) for r in rows]
+
+    async def all_words(self) -> tuple[str, ...]:
+        """Возвращает кортеж всех слов (lowercase). Для кеша фильтра."""
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute("SELECT word FROM blocklist_words")
+            rows = await cur.fetchall()
+            return tuple(r[0] for r in rows)
+
+    # ---------- blocklist (patterns) ----------
+
+    async def add_pattern(
+        self, pattern: str, note: str | None = None, by: int | None = None,
+    ) -> BlocklistPattern:
+        """Добавляет regex-паттерн. Бросает re.error если regex битый,
+        aiosqlite.IntegrityError если дубликат."""
+        # Валидация — компилируем сразу, чтобы кривой regex не сохранился.
+        re.compile(pattern)
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(
+                "INSERT INTO blocklist_patterns(pattern, note, by, created) "
+                "VALUES (?, ?, ?, ?)",
+                (pattern, note, by, time.time()),
+            )
+            await db.commit()
+            new_id = cur.lastrowid
+        return BlocklistPattern(
+            id=int(new_id), pattern=pattern, note=note, by=by, created=time.time()
+        )
+
+    async def delete_pattern(self, key: str | int) -> BlocklistPattern | None:
+        async with aiosqlite.connect(self.path) as db:
+            if isinstance(key, int):
+                cur = await db.execute(
+                    "SELECT id, pattern, note, by, created "
+                    "FROM blocklist_patterns WHERE id = ?",
+                    (key,),
+                )
+            else:
+                cur = await db.execute(
+                    "SELECT id, pattern, note, by, created "
+                    "FROM blocklist_patterns WHERE pattern = ?",
+                    (key,),
+                )
+            row = await cur.fetchone()
+            if not row:
+                return None
+            entry = BlocklistPattern(*row)
+            await db.execute(
+                "DELETE FROM blocklist_patterns WHERE id = ?", (entry.id,)
+            )
+            await db.commit()
+            return entry
+
+    async def list_patterns(self) -> list[BlocklistPattern]:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(
+                "SELECT id, pattern, note, by, created "
+                "FROM blocklist_patterns ORDER BY id"
+            )
+            rows = await cur.fetchall()
+            return [BlocklistPattern(*r) for r in rows]
+
+    async def all_patterns(self) -> tuple[str, ...]:
+        """Возвращает кортеж строк-паттернов (как есть, без компиляции)."""
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute("SELECT pattern FROM blocklist_patterns")
+            rows = await cur.fetchall()
+            return tuple(r[0] for r in rows)
 
     # ---------- stats ----------
 

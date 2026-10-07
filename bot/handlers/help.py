@@ -10,6 +10,7 @@ from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot import texts
 from bot.config import Settings
 from bot.db import Database
 
@@ -40,9 +41,22 @@ def _is_admin(message: types.Message, settings: Settings) -> bool:
 def _main_menu_kb() -> InlineKeyboardBuilder:
     b = InlineKeyboardBuilder()
     b.button(text="🛡 Админ-команды", callback_data="help:admin")
+    b.button(text="🚫 Стоп-лист",     callback_data="help:blocklist")
     b.button(text="📊 Статистика",     callback_data="help:stats")
     b.button(text="🔧 Настройки",       callback_data="help:settings")
-    b.adjust(2, 1)
+    b.adjust(2, 2)
+    return b
+
+
+def _blocklist_menu_kb() -> InlineKeyboardBuilder:
+    b = InlineKeyboardBuilder()
+    b.button(text="📝 Слова",            callback_data="blocklist:words")
+    b.button(text="🔧 Regex",            callback_data="blocklist:patterns")
+    b.button(text="➕ Добавить слово",   callback_data="blocklist:add_word")
+    b.button(text="➕ Добавить regex",   callback_data="blocklist:add_pattern")
+    b.button(text="🧪 Тест фильтра",     callback_data="blocklist:test")
+    b.button(text="← Назад",            callback_data="help:back")
+    b.adjust(2, 2, 1, 1)
     return b
 
 
@@ -107,7 +121,22 @@ async def help_callback(
         await _render_stats(callback, db)
     elif section == "settings":
         await _render_settings(callback, settings)
+    elif section == "blocklist":
+        await _render_blocklist_menu(callback, db)
     await callback.answer()
+
+
+async def _render_blocklist_menu(
+    callback: types.CallbackQuery, db: Database,
+) -> None:
+    """Главное меню стоп-листа: статистика + кнопки."""
+    words = await db.list_words()
+    patterns = await db.list_patterns()
+    text = texts.BLOCKLIST_MENU_TEXT.format(
+        words_count=len(words),
+        patterns_count=len(patterns),
+    )
+    await callback.message.edit_text(text, reply_markup=_blocklist_menu_kb().as_markup())
 
 
 async def _render_stats(callback: types.CallbackQuery, db: Database) -> None:
@@ -125,6 +154,7 @@ async def _render_stats(callback: types.CallbackQuery, db: Database) -> None:
 
 async def _render_settings(callback: types.CallbackQuery, settings: Settings) -> None:
     patterns = "\n".join(f"  • <code>{p}</code>" for p in settings.banned_patterns) or "  (пусто)"
+    ml_status = "🟢 вкл" if settings.ml_enabled else "🔴 выкл"
     text = (
         "🔧 <b>Настройки</b>\n\n"
         f"MIN_ACCOUNT_AGE_DAYS = <b>{settings.min_account_age_days}</b>\n"
@@ -132,6 +162,10 @@ async def _render_settings(callback: types.CallbackQuery, settings: Settings) ->
         f"FLOOD_WINDOW_SECONDS = <b>{settings.flood_window_seconds}</b>\n"
         f"CAPTCHA_TIMEOUT_SECONDS = <b>{settings.captcha_timeout_seconds}</b>\n"
         f"DB_PATH = <code>{settings.db_path}</code>\n\n"
+        f"<b>ML антиспам:</b> {ml_status}\n"
+        f"ML_MODEL_DIR = <code>{settings.ml_model_dir}</code>\n"
+        f"ML_THRESHOLD = <b>{settings.ml_threshold}</b>\n"
+        f"ML_BAD_LABELS = <b>{', '.join(settings.ml_bad_labels) or '(авто)'}</b>\n\n"
         f"<b>BANNED_PATTERNS</b> ({len(settings.banned_patterns)}):\n"
         f"{patterns}"
     )
