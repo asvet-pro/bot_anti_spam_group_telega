@@ -149,17 +149,39 @@ async def on_captcha_pass(
 
 
 async def captcha_sweeper(bot: Bot, db: Database, settings: Settings) -> None:
-    """Фоновая задача: раз в 10 сек проверяет истёкшие капчи и кикает."""
+    """Фоновая задача: раз в 10 сек проверяет истёкшие капчи и кикает.
+
+    Страховка: берём записи с дедлайном старше SAFETY_LAG_SECONDS — если
+    бот был выключен в момент истечения капчи, при следующем старте sweeper
+    всё равно подчистит и сообщение, и сам факт.
+    """
+    SAFETY_LAG_SECONDS = 5 * 60  # 5 минут — лаг для подбора после рестарта
+
     while True:
         try:
-            expired = await db.get_expired_captchas()
+            threshold = time.time() - SAFETY_LAG_SECONDS
+            expired = await db.get_expired_captchas(now=threshold)
             for c in expired:
+                # 1) Сначала удаляем сообщение с капчей из чата,
+                #    чтобы оно не висело "вечно" после кика.
                 try:
-                    # Пытаемся кикнуть
+                    await bot.delete_message(
+                        chat_id=c.chat_id, message_id=c.message_id
+                    )
+                except TelegramAPIError as e:
+                    # Уже удалено, нет прав, или сообщение слишком старое —
+                    # не страшно, идём дальше.
+                    logger.debug(
+                        "Не удалось удалить капчу-сообщение %s: %s",
+                        c.message_id, e,
+                    )
+
+                # 2) Пытаемся кикнуть (если юзер ещё в чате).
+                try:
+                    # ban + unban = чистый кик (юзер может заново войти).
                     await bot.ban_chat_member(
                         chat_id=c.chat_id, user_id=c.user_id
                     )
-                    # и сразу разбанить (unban), чтобы только кикнуть
                     await bot.unban_chat_member(
                         chat_id=c.chat_id, user_id=c.user_id
                     )
@@ -171,20 +193,13 @@ async def captcha_sweeper(bot: Bot, db: Database, settings: Settings) -> None:
                 except TelegramRetryAfter as e:
                     await asyncio.sleep(e.retry_after + 1)
                 except TelegramAPIError as e:
-                    logger.warning(
-                        "Ошибка при кике user_id=%s: %s", c.user_id, e
+                    # Типичный случай: "user not found" — юзер уже вышел сам.
+                    logger.debug(
+                        "Кик user_id=%s не удался (вероятно уже вышел): %s",
+                        c.user_id, e,
                     )
 
-                # Прячем кнопку
-                try:
-                    await bot.edit_message_reply_markup(
-                        chat_id=c.chat_id,
-                        message_id=c.message_id,
-                        reply_markup=None,
-                    )
-                except TelegramAPIError:
-                    pass
-
+                # 3) Чистим БД.
                 await db.delete_captcha(c.user_id)
                 await db.inc("captcha_fails")
                 logger.info("Captcha expired/kicked: user=%s", c.user_id)
