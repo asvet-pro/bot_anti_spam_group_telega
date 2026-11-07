@@ -26,6 +26,7 @@ from bot.config import Settings
 from bot.db import CaptchaChallenge, Database
 from bot.filters.admin import AdminFilter
 from bot.filters.new_account import NewAccountCheck
+from bot.moderation import Moderation
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ async def on_new_members(
     db: Database,
     new_account: NewAccountCheck,
     admin: AdminFilter,
+    moderation: Moderation,
 ) -> None:
     """Кто-то вступил в чат — выдаём капчу или сразу бан, если аккаунт
     слишком молодой."""
@@ -79,18 +81,11 @@ async def on_new_members(
                 "(порог %s)",
                 user.full_name, user.id, age_days, settings.min_account_age_days,
             )
-            await db.ban(
-                user_id=user.id,
-                chat_id=settings.chat_id,
+            await moderation.ban_user(
+                bot, user.id, settings.chat_id,
                 reason=f"аккаунт < {settings.min_account_age_days} дней",
-                by=None,
+                action="permanent_ban",
             )
-            try:
-                await bot.ban_chat_member(
-                    chat_id=settings.chat_id, user_id=user.id
-                )
-            except TelegramAPIError as e:
-                logger.warning("Не удалось забанить %s: %s", user.id, e)
             await message.answer(
                 texts.NEW_MEMBER_BANNED.format(
                     name=user.full_name,

@@ -147,6 +147,9 @@ async def cmd_stats(
             captcha_fails=s.get("captcha_fails", 0),
             flood_warns=s.get("flood_warns", 0),
         )
+        + f"\n<b>Баны:</b> авто (24ч): <b>{s.get('auto_bans', 0)}</b>"
+          f" · вечные: <b>{s.get('permanent_bans', 0)}</b>"
+          f" · снято: <b>{s.get('unbans', 0)}</b>"
         + f"\n<b>Разметка:</b> спам: <b>{spam_n}</b> · ок: <b>{ok_n}</b>"
     )
 

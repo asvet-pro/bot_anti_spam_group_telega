@@ -45,6 +45,8 @@ class Settings:
     # --- Дубликаты (одинаковые сообщения подряд) ---
     duplicate_max_repeats: int
     duplicate_window_seconds: int
+    # Сколько одинаковых сообщений подряд → бан 24 часа.
+    duplicate_ban_threshold: int
     captcha_timeout_seconds: int
     banned_patterns: tuple[re.Pattern[str], ...]
     db_path: Path
@@ -53,8 +55,6 @@ class Settings:
     ml_model_dir: Path
     ml_threshold: float
     ml_bad_labels: tuple[str, ...]
-    # --- Мягкий режим: подозрительное → админу в личку на разбор ---
-    review_mode: bool
 
     @property
     def db_dir(self) -> Path:
@@ -98,6 +98,7 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
     captcha_to = int(os.getenv("CAPTCHA_TIMEOUT_SECONDS", "120"))
     dup_repeats = int(os.getenv("DUPLICATE_MAX_REPEATS", "2"))
     dup_window = int(os.getenv("DUPLICATE_WINDOW_SECONDS", "600"))
+    dup_ban = int(os.getenv("DUPLICATE_BAN_THRESHOLD", "5"))
 
     patterns_raw = os.getenv("BANNED_PATTERNS", "").strip()
     patterns: list[re.Pattern[str]] = []
@@ -127,11 +128,6 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         ml_threshold = 0.6
     ml_bad_labels = _str_list(os.getenv("ML_BAD_LABELS", ""))
 
-    # Мягкий режим: сомнительные сообщения не удаляются сразу, а уходят
-    # админу в личку с кнопками «Спам / Ок / В стоп-лист». Так собирается
-    # датасет для обучения модели.
-    review_mode = _bool(os.getenv("REVIEW_MODE", "false"), default=False)
-
     return Settings(
         bot_token=bot_token,
         chat_id=chat_id,
@@ -141,6 +137,7 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         flood_window_seconds=flood_win,
         duplicate_max_repeats=dup_repeats,
         duplicate_window_seconds=dup_window,
+        duplicate_ban_threshold=dup_ban,
         captcha_timeout_seconds=captcha_to,
         banned_patterns=tuple(patterns),
         db_path=db_path,
@@ -148,5 +145,4 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         ml_model_dir=ml_model_dir,
         ml_threshold=ml_threshold,
         ml_bad_labels=ml_bad_labels,
-        review_mode=review_mode,
     )

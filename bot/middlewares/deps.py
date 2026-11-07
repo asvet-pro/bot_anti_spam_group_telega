@@ -15,6 +15,7 @@ from bot.filters.flood import FloodCheck
 from bot.filters.ml_spam import MLSpamCheck
 from bot.filters.new_account import NewAccountCheck
 from bot.filters.spam import SpamFilter
+from bot.moderation import Moderation
 
 
 class DependencyMiddleware(BaseMiddleware):
@@ -29,6 +30,7 @@ class DependencyMiddleware(BaseMiddleware):
         admin: AdminFilter,
         ml_spam: MLSpamCheck,
         blocklist: BlocklistFilter,
+        moderation: Moderation,
     ) -> None:
         self.settings = settings
         self.db = db
@@ -39,6 +41,7 @@ class DependencyMiddleware(BaseMiddleware):
         self.admin = admin
         self.ml_spam = ml_spam
         self.blocklist = blocklist
+        self.moderation = moderation
 
     async def __call__(
         self,
@@ -55,4 +58,5 @@ class DependencyMiddleware(BaseMiddleware):
         data["admin"] = self.admin
         data["ml_spam"] = self.ml_spam
         data["blocklist"] = self.blocklist
+        data["moderation"] = self.moderation
         return await handler(event, data)

@@ -19,6 +19,15 @@ from typing import Iterable
 import aiosqlite
 
 
+def _text_hash(text: str) -> str:
+    """Хэш нормализованного текста (регистр и пробелы игнорируются)."""
+    import hashlib
+    import re
+
+    normalized = re.sub(r"\s+", "", (text or "").lower())
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS captchas (
     user_id    INTEGER PRIMARY KEY,
@@ -108,6 +117,19 @@ CREATE TABLE IF NOT EXISTS pending_review (
     created     REAL    NOT NULL
 );
 
+-- Дедупликация уведомлений: не шлём админу серию одинаковых сообщений
+-- от одного автора (чтобы личка не засорялась десятками одинаковых
+-- уведомлений).
+CREATE TABLE IF NOT EXISTS notified (
+    user_id   INTEGER NOT NULL,
+    chat_id   INTEGER NOT NULL,
+    text_hash TEXT    NOT NULL,
+    ts        REAL    NOT NULL,
+    PRIMARY KEY (user_id, chat_id, text_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notified_ts ON notified(ts);
+
 -- Управляемый стоп-лист: простые слова (подстрочный поиск, регистр игнорируется).
 CREATE TABLE IF NOT EXISTS blocklist_words (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,7 +188,8 @@ class Database:
             # Инициализируем счётчики по умолчанию
             for key in (
                 "bans", "deleted", "captcha_fails", "flood_warns", "total_events",
-                "reviews_spam", "reviews_ok",
+                "reviews_spam", "reviews_ok", "auto_bans", "permanent_bans",
+                "unbans",
             ):
                 await db.execute(
                     "INSERT OR IGNORE INTO stats(key, value) VALUES (?, 0)", (key,)
@@ -503,6 +526,46 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             async with db.execute("SELECT key, value FROM stats") as cur:
                 return {k: v for k, v in await cur.fetchall()}
+
+    # ---------- дедупликация уведомлений ----------
+
+    async def was_recently_notified(
+        self,
+        user_id: int,
+        chat_id: int,
+        text: str,
+        window_seconds: float = 900.0,
+    ) -> bool:
+        """True, если про этот текст от этого автора недавно уже писали.
+
+        Не даёт завалить личку админа десятками одинаковых уведомлений,
+        когда спамер шлёт одно и то же подряд.
+        """
+        h = _text_hash(text)
+        cutoff = time.time() - window_seconds
+        async with aiosqlite.connect(self.path) as db:
+            async with db.execute(
+                "SELECT 1 FROM notified "
+                "WHERE user_id = ? AND chat_id = ? AND text_hash = ? AND ts >= ?",
+                (user_id, chat_id, h, cutoff),
+            ) as cur:
+                return (await cur.fetchone()) is not None
+
+    async def mark_notified(
+        self, user_id: int, chat_id: int, text: str,
+    ) -> None:
+        """Помечает, что уведомление про этот текст отправлено."""
+        h = _text_hash(text)
+        now = time.time()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO notified(user_id, chat_id, text_hash, ts) "
+                "VALUES (?, ?, ?, ?)",
+                (user_id, chat_id, h, now),
+            )
+            # Подрезаем старые записи.
+            await db.execute("DELETE FROM notified WHERE ts < ?", (now - 3600.0,))
+            await db.commit()
 
     # ---------- deleted messages ----------
 

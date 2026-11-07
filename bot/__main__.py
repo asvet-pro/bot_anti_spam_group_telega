@@ -30,6 +30,7 @@ from bot.handlers import help as help_handlers
 from bot.handlers import messages as messages_handlers
 from bot.handlers import review as review_handlers
 from bot.middlewares.deps import DependencyMiddleware
+from bot.moderation import Moderation
 from bot.model_runtime import MLSpamClassifier
 
 
@@ -157,6 +158,7 @@ async def main() -> None:
         bad_labels=bad_labels,
     )
     blocklist = BlocklistFilter(db=db)
+    moderation = Moderation(db=db, admin=admin, settings=settings)
 
     bot = Bot(
         token=settings.bot_token,
@@ -168,17 +170,17 @@ async def main() -> None:
     # Мидлварь: инжектим зависимости
     dp.message.middleware(
         DependencyMiddleware(
-            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist
+            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist, moderation
         )
     )
     dp.callback_query.middleware(
         DependencyMiddleware(
-            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist
+            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist, moderation
         )
     )
     dp.chat_member.middleware(
         DependencyMiddleware(
-            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist
+            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist, moderation
         )
     )
 
