@@ -75,13 +75,23 @@ class BlocklistFilter:
             self._loaded_at = now
 
     async def match_word(self, text: str) -> str | None:
-        """Возвращает первое сматчившееся слово (lowercase) или None."""
+        """Возвращает первое сматчившееся слово (lowercase) или None.
+
+        Ищем по границам слов: «mlm» больше не ловится внутри «млмщик».
+        Если слово содержит НЕ буквенно-цифровые символы (например «c++»),
+        ищем как подстроку — иначе границы не построить.
+        """
         if not text:
             return None
         await self._ensure_loaded()
         lowered = text.lower()
         for w in self._words:
-            if w and w in lowered:
+            if not w:
+                continue
+            if _is_word_like(w):
+                if re.search(rf"(?<!\w){re.escape(w)}(?!\w)", lowered):
+                    return w
+            elif w in lowered:
                 return w
         return None
 
@@ -99,3 +109,12 @@ class BlocklistFilter:
     def enabled(self) -> bool:
         """True, если в кеше есть хоть что-то. Не дёргает БД."""
         return bool(self._words) or bool(self._patterns)
+
+
+def _is_word_like(word: str) -> bool:
+    """True, если слово состоит только из букв/цифр/подчёркивания.
+
+    Для таких слов ищем по границам. Слова со спецсимволами («c++»,
+    «.net») ищем как подстроку — границы для них бессмысленны.
+    """
+    return bool(re.fullmatch(r"\w+", word, flags=re.UNICODE))
