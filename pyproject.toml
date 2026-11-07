@@ -29,6 +29,12 @@ export = [
     "onnx>=1.16,<2",
 ]
 
+# Зависимости для разработки и запуска тестов.
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
 [project.scripts]
 asvet-bot = "bot.__main__:main"
 
@@ -41,3 +47,8 @@ packages = ["bot"]
 
 [tool.uv]
 package = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

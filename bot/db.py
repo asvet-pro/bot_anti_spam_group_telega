@@ -63,6 +63,37 @@ CREATE TABLE IF NOT EXISTS deleted_msgs (
     ts      REAL    NOT NULL
 );
 
+-- Разметка спама админом: «подозрительные» сообщения, которые бот НЕ
+-- удалил, а отправил админу в личку на разбор. Админ жмёт «спам»/«ок».
+-- Хранятся только помеченные админом сообщения — обычная переписка
+-- участников чата в базу не попадает.
+CREATE TABLE IF NOT EXISTS spam_reports (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    msg_id      INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    chat_id     INTEGER NOT NULL,
+    text        TEXT    NOT NULL,
+    reason      TEXT,
+    verdict     TEXT,               -- 'spam' | 'ok' | NULL (ещё не размечено)
+    blocklist_hint TEXT,            -- что предложить добавить в стоп-лист
+    created     REAL    NOT NULL,
+    decided     REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_spam_reports_verdict ON spam_reports(verdict);
+CREATE INDEX IF NOT EXISTS idx_spam_reports_msg ON spam_reports(msg_id);
+
+-- Очередь сообщений, отправленных админу на разбор (чтобы не дублировать).
+CREATE TABLE IF NOT EXISTS pending_review (
+    msg_id      INTEGER PRIMARY KEY,
+    user_id     INTEGER NOT NULL,
+    chat_id     INTEGER NOT NULL,
+    text        TEXT    NOT NULL,
+    reason      TEXT,
+    blocklist_hint TEXT,
+    created     REAL    NOT NULL
+);
+
 -- Управляемый стоп-лист: простые слова (подстрочный поиск, регистр игнорируется).
 CREATE TABLE IF NOT EXISTS blocklist_words (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,7 +150,10 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             await db.executescript(SCHEMA)
             # Инициализируем счётчики по умолчанию
-            for key in ("bans", "deleted", "captcha_fails", "flood_warns", "total_events"):
+            for key in (
+                "bans", "deleted", "captcha_fails", "flood_warns", "total_events",
+                "reviews_spam", "reviews_ok",
+            ):
                 await db.execute(
                     "INSERT OR IGNORE INTO stats(key, value) VALUES (?, 0)", (key,)
                 )
@@ -418,3 +452,129 @@ class Database:
                 (msg_id, user_id, chat_id, time.time()),
             )
             await db.commit()
+
+    # ---------- spam reports (разметка админом) ----------
+
+    async def add_pending_review(
+        self,
+        msg_id: int,
+        user_id: int,
+        chat_id: int,
+        text: str,
+        reason: str | None = None,
+        blocklist_hint: str | None = None,
+    ) -> bool:
+        """Кладёт сообщение в очередь на разбор. False — уже было в очереди."""
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(
+                "INSERT OR IGNORE INTO pending_review"
+                "(msg_id, user_id, chat_id, text, reason, blocklist_hint, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (msg_id, user_id, chat_id, text, reason, blocklist_hint, time.time()),
+            )
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def get_pending_review(self, msg_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            async with db.execute(
+                "SELECT msg_id, user_id, chat_id, text, reason, blocklist_hint "
+                "FROM pending_review WHERE msg_id = ?",
+                (msg_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return None
+                return {
+                    "msg_id": row[0],
+                    "user_id": row[1],
+                    "chat_id": row[2],
+                    "text": row[3],
+                    "reason": row[4],
+                    "blocklist_hint": row[5],
+                }
+
+    async def resolve_pending_review(
+        self,
+        msg_id: int,
+        verdict: str,
+        blocklist_hint: str | None = None,
+    ) -> dict | None:
+        """Помечает сообщение как спам/ок и переносит в spam_reports.
+
+        verdict: 'spam' | 'ok'. Возвращает сохранённую запись или None.
+        """
+        now = time.time()
+        async with aiosqlite.connect(self.path) as db:
+            async with db.execute(
+                "SELECT msg_id, user_id, chat_id, text, reason, blocklist_hint "
+                "FROM pending_review WHERE msg_id = ?",
+                (msg_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return None
+                await db.execute(
+                    "INSERT INTO spam_reports"
+                    "(msg_id, user_id, chat_id, text, reason, verdict, "
+                    " blocklist_hint, created, decided) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        row[0], row[1], row[2], row[3], row[4], verdict,
+                        blocklist_hint or row[5], now, now,
+                    ),
+                )
+                await db.execute(
+                    "DELETE FROM pending_review WHERE msg_id = ?", (msg_id,)
+                )
+                await db.commit()
+                return {
+                    "msg_id": row[0],
+                    "user_id": row[1],
+                    "chat_id": row[2],
+                    "text": row[3],
+                    "reason": row[4],
+                    "verdict": verdict,
+                }
+
+    async def count_reports(self, verdict: str | None = None) -> int:
+        """Сколько записей в spam_reports (по вердикту, если задан)."""
+        async with aiosqlite.connect(self.path) as db:
+            if verdict is None:
+                sql = "SELECT COUNT(*) FROM spam_reports"
+                params: tuple = ()
+            else:
+                sql = "SELECT COUNT(*) FROM spam_reports WHERE verdict = ?"
+                params = (verdict,)
+            async with db.execute(sql, params) as cur:
+                row = await cur.fetchone()
+                return int(row[0]) if row else 0
+
+    async def list_reports(self, limit: int = 50, verdict: str | None = None) -> list[dict]:
+        """Последние размеченные сообщения — для просмотра в боте."""
+        async with aiosqlite.connect(self.path) as db:
+            if verdict is None:
+                sql = (
+                    "SELECT msg_id, user_id, text, reason, verdict, created "
+                    "FROM spam_reports ORDER BY id DESC LIMIT ?"
+                )
+                params: tuple = (limit,)
+            else:
+                sql = (
+                    "SELECT msg_id, user_id, text, reason, verdict, created "
+                    "FROM spam_reports WHERE verdict = ? ORDER BY id DESC LIMIT ?"
+                )
+                params = (verdict, limit)
+            async with db.execute(sql, params) as cur:
+                rows = await cur.fetchall()
+                return [
+                    {
+                        "msg_id": r[0],
+                        "user_id": r[1],
+                        "text": r[2],
+                        "reason": r[3],
+                        "verdict": r[4],
+                        "created": r[5],
+                    }
+                    for r in rows
+                ]

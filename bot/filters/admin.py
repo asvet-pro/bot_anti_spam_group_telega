@@ -1,16 +1,61 @@
-"""Проверка, является ли пользователь админом бота (по списку ADMIN_IDS)."""
+"""Проверка, является ли пользователь админом бота (по списку ADMIN_IDS).
+
+Дополнительно учитываем администраторов самой группы: список из
+ADMIN_IDS может быть неполным (так уже случилось — второй админ группы
+не был в списке, и бот резал его сообщения как спам). Админы группы
+определяются через getChatAdministrators и кешируются на несколько минут.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+import time
+from dataclasses import dataclass, field
 
-from aiogram import types
+from aiogram import Bot, types
+from aiogram.exceptions import TelegramAPIError
+
+logger = logging.getLogger(__name__)
+
+# Как долго кешировать список админов группы.
+ADMINS_CACHE_TTL = 300.0
 
 
 @dataclass(slots=True)
 class AdminFilter:
     admin_ids: tuple[int, ...]
+    # id админов группы (определяются лениво).
+    group_admin_ids: set[int] = field(default_factory=set)
+    _loaded_at: float = 0.0
 
     def is_admin(self, user: types.User | None) -> bool:
         if user is None:
             return False
-        return user.id in self.admin_ids
+        if user.id in self.admin_ids:
+            return True
+        # Админ группы тоже неприкосновенен.
+        return user.id in self.group_admin_ids
+
+    async def refresh_group_admins(self, bot: Bot, chat_id: int) -> None:
+        """Обновляет кеш админов группы. Ошибки не пробрасываем."""
+        try:
+            admins = await bot.get_chat_administrators(chat_id)
+        except TelegramAPIError as e:
+            logger.warning("Не удалось получить админов чата %s: %s", chat_id, e)
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Ошибка при получении админов чата %s: %s", chat_id, e)
+            return
+
+        ids = {a.user.id for a in admins if not a.user.is_bot}
+        self.group_admin_ids = ids
+        self._loaded_at = time.monotonic()
+        logger.info(
+            "Админы чата %s обновлены: %s (из ADMIN_IDS: %s)",
+            chat_id, sorted(ids), self.admin_ids,
+        )
+
+    async def ensure_group_admins(self, bot: Bot, chat_id: int) -> None:
+        """Обновляет список админов, если кеш устарел."""
+        if time.monotonic() - self._loaded_at < ADMINS_CACHE_TTL:
+            return
+        await self.refresh_group_admins(bot, chat_id)

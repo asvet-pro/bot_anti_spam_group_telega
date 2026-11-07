@@ -23,6 +23,40 @@ SOCKS_HOST = "127.0.0.1"
 SOCKS_PORT = 1080
 SINGBOX_CONFIG_PATH = Path("/app/sing-box.json")
 
+# Таймауты сессии aiogram. Раньше дефолт aiohttp (5 мин на весь сетевой
+# уровень) совпадал с idle-таймаутом VLESS-туннеля: соединение жило
+# несколько часов, потом рвалось, и бот несколько минут не видел
+# сообщения. Короткие таймауты + короткие polling-циклы уменьшают
+# «окно слепоты» до секунд.
+SESSION_TIMEOUT = 30.0
+
+# Прямая проверка доступности Telegram при старте.
+DIRECT_CHECK_TIMEOUT = 8.0
+
+
+async def telegram_reachable_direct() -> bool:
+    """Проверяет, доступен ли api.telegram.org напрямую (без прокси).
+
+    True — работаем без прокси (надёжнее).
+    False — нужен прокси.
+    """
+    host, port = "api.telegram.org", 443
+    try:
+        fut = asyncio.open_connection(host, port)
+        reader, writer = await asyncio.wait_for(fut, timeout=DIRECT_CHECK_TIMEOUT)
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info("Direct connection to %s:%s established", host, port)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "Direct connection to %s:%s failed: %s", host, port, e
+        )
+        return False
+
 
 @dataclass(frozen=True)
 class VlessConfig:

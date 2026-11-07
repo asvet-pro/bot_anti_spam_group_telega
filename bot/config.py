@@ -50,6 +50,8 @@ class Settings:
     ml_model_dir: Path
     ml_threshold: float
     ml_bad_labels: tuple[str, ...]
+    # --- Мягкий режим: подозрительное → админу в личку на разбор ---
+    review_mode: bool
 
     @property
     def db_dir(self) -> Path:
@@ -120,6 +122,11 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         ml_threshold = 0.6
     ml_bad_labels = _str_list(os.getenv("ML_BAD_LABELS", ""))
 
+    # Мягкий режим: сомнительные сообщения не удаляются сразу, а уходят
+    # админу в личку с кнопками «Спам / Ок / В стоп-лист». Так собирается
+    # датасет для обучения модели.
+    review_mode = _bool(os.getenv("REVIEW_MODE", "false"), default=False)
+
     return Settings(
         bot_token=bot_token,
         chat_id=chat_id,
@@ -134,4 +141,5 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         ml_model_dir=ml_model_dir,
         ml_threshold=ml_threshold,
         ml_bad_labels=ml_bad_labels,
+        review_mode=review_mode,
     )

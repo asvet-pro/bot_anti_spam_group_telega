@@ -48,6 +48,7 @@ async def on_new_members(
     settings: Settings,
     db: Database,
     new_account: NewAccountCheck,
+    admin: AdminFilter,
 ) -> None:
     """Кто-то вступил в чат — выдаём капчу или сразу бан, если аккаунт
     слишком молодой."""
@@ -67,7 +68,17 @@ async def on_new_members(
             )
             continue
 
+        # Админы (в т.ч. админы самой группы) и вайтлист — капчи не надо.
+        if admin.is_admin(user) or await db.is_whitelisted(user.id):
+            continue
+
         if new_account.is_too_young(user):
+            age_days = new_account.estimate_age_days(user.id)
+            logger.info(
+                "Новый участник забанен: user=%s id=%s возраст≈%s дней "
+                "(порог %s)",
+                user.full_name, user.id, age_days, settings.min_account_age_days,
+            )
             await db.ban(
                 user_id=user.id,
                 chat_id=settings.chat_id,

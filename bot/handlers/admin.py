@@ -137,6 +137,8 @@ async def cmd_stats(
     if not _is_admin(message, admin):
         return
     s = await db.get_stats()
+    spam_n = await db.count_reports("spam")
+    ok_n = await db.count_reports("ok")
     await message.reply(
         texts.ADMIN_STATS.format(
             total=s.get("total_events", 0),
@@ -145,7 +147,32 @@ async def cmd_stats(
             captcha_fails=s.get("captcha_fails", 0),
             flood_warns=s.get("flood_warns", 0),
         )
+        + f"\n<b>Разметка:</b> спам: <b>{spam_n}</b> · ок: <b>{ok_n}</b>"
     )
+
+
+@router.message(Command("reports"))
+async def cmd_reports(
+    message: types.Message, db: Database, admin: AdminFilter,
+) -> None:
+    """Показать последние размеченные сообщения (данные для обучения)."""
+    if not _is_admin(message, admin):
+        return
+    reports = await db.list_reports(limit=20)
+    spam_n = await db.count_reports("spam")
+    ok_n = await db.count_reports("ok")
+    if not reports:
+        await message.reply(
+            texts.REPORT_LIST_HEADER.format(spam=spam_n, ok=ok_n)
+            + texts.REPORT_LIST_EMPTY
+        )
+        return
+    lines = [texts.REPORT_LIST_HEADER.format(spam=spam_n, ok=ok_n)]
+    for r in reports:
+        mark = "🚫" if r["verdict"] == "spam" else "✅"
+        snippet = (r["text"] or "")[:120].replace("\n", " ")
+        lines.append(f"{mark} <code>{r['user_id']}</code>: {snippet}")
+    await message.reply("\n".join(lines))
 
 
 @router.message(Command("id"))

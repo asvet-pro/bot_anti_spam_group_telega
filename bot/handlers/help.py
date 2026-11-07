@@ -88,7 +88,9 @@ ADMIN_TEXT = (
     "<code>/whitelist_del @user</code>\n"
     "  Убрать из белого списка.\n\n"
     "<code>/stats</code>\n"
-    "  Статистика по событиям.\n\n"
+    "  Статистика по событиям + разметка.\n\n"
+    "<code>/reports</code>\n"
+    "  Последние размеченные сообщения (данные для обучения).\n\n"
     "<code>/id</code>\n"
     "  Показать chat.id и user.id (работает в любом чате)."
 )
@@ -141,13 +143,16 @@ async def _render_blocklist_menu(
 
 async def _render_stats(callback: types.CallbackQuery, db: Database) -> None:
     s = await db.get_stats()
+    spam_n = await db.count_reports("spam")
+    ok_n = await db.count_reports("ok")
     text = (
         "📊 <b>Статистика</b>\n\n"
         f"Банов: <b>{s.get('bans', 0)}</b>\n"
         f"Удалённых сообщений: <b>{s.get('deleted', 0)}</b>\n"
         f"Проваленных капч: <b>{s.get('captcha_fails', 0)}</b>\n"
         f"Флуд-варнов: <b>{s.get('flood_warns', 0)}</b>\n"
-        f"Всего событий: <b>{s.get('total_events', 0)}</b>"
+        f"Всего событий: <b>{s.get('total_events', 0)}</b>\n\n"
+        f"<b>Разметка:</b> спам: <b>{spam_n}</b> · ок: <b>{ok_n}</b>"
     )
     await callback.message.edit_text(text, reply_markup=_stats_kb().as_markup())
 
