@@ -42,6 +42,9 @@ class Settings:
     min_account_age_days: int
     flood_max_messages: int
     flood_window_seconds: int
+    # --- Дубликаты (одинаковые сообщения подряд) ---
+    duplicate_max_repeats: int
+    duplicate_window_seconds: int
     captcha_timeout_seconds: int
     banned_patterns: tuple[re.Pattern[str], ...]
     db_path: Path
@@ -93,6 +96,8 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
     flood_max = int(os.getenv("FLOOD_MAX_MESSAGES", "5"))
     flood_win = int(os.getenv("FLOOD_WINDOW_SECONDS", "10"))
     captcha_to = int(os.getenv("CAPTCHA_TIMEOUT_SECONDS", "120"))
+    dup_repeats = int(os.getenv("DUPLICATE_MAX_REPEATS", "2"))
+    dup_window = int(os.getenv("DUPLICATE_WINDOW_SECONDS", "600"))
 
     patterns_raw = os.getenv("BANNED_PATTERNS", "").strip()
     patterns: list[re.Pattern[str]] = []
@@ -134,6 +139,8 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         min_account_age_days=min_age,
         flood_max_messages=flood_max,
         flood_window_seconds=flood_win,
+        duplicate_max_repeats=dup_repeats,
+        duplicate_window_seconds=dup_window,
         captcha_timeout_seconds=captcha_to,
         banned_patterns=tuple(patterns),
         db_path=db_path,

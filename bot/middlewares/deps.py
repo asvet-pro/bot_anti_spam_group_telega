@@ -1,4 +1,4 @@
-"""Dependency-injection мидлварь: прокидывает settings/db/фильтры в хендлеры."""
+"""Dependency-injection мидлварь: прокидываем settings/db/фильтры в хендлеры."""
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Dict
@@ -10,6 +10,7 @@ from bot.config import Settings
 from bot.db import Database
 from bot.filters.admin import AdminFilter
 from bot.filters.blocklist import BlocklistFilter
+from bot.filters.duplicate import DuplicateCheck
 from bot.filters.flood import FloodCheck
 from bot.filters.ml_spam import MLSpamCheck
 from bot.filters.new_account import NewAccountCheck
@@ -23,6 +24,7 @@ class DependencyMiddleware(BaseMiddleware):
         db: Database,
         new_account: NewAccountCheck,
         flood: FloodCheck,
+        duplicate: DuplicateCheck,
         spam: SpamFilter,
         admin: AdminFilter,
         ml_spam: MLSpamCheck,
@@ -32,6 +34,7 @@ class DependencyMiddleware(BaseMiddleware):
         self.db = db
         self.new_account = new_account
         self.flood = flood
+        self.duplicate = duplicate
         self.spam = spam
         self.admin = admin
         self.ml_spam = ml_spam
@@ -47,6 +50,7 @@ class DependencyMiddleware(BaseMiddleware):
         data["db"] = self.db
         data["new_account"] = self.new_account
         data["flood"] = self.flood
+        data["duplicate"] = self.duplicate
         data["spam"] = self.spam
         data["admin"] = self.admin
         data["ml_spam"] = self.ml_spam

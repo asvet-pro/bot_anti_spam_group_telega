@@ -18,6 +18,7 @@ from bot.config import load_settings
 from bot.db import Database
 from bot.filters.admin import AdminFilter
 from bot.filters.blocklist import BlocklistFilter
+from bot.filters.duplicate import DuplicateCheck
 from bot.filters.flood import FloodCheck
 from bot.filters.ml_spam import DEFAULT_BAD_LABELS, MLSpamCheck
 from bot.filters.new_account import NewAccountCheck
@@ -118,6 +119,11 @@ async def main() -> None:
         max_messages=settings.flood_max_messages,
         window_seconds=settings.flood_window_seconds,
     )
+    duplicate = DuplicateCheck(
+        db=db,
+        max_repeats=settings.duplicate_max_repeats,
+        window_seconds=settings.duplicate_window_seconds,
+    )
     spam = SpamFilter(patterns=settings.banned_patterns)
     admin = AdminFilter(admin_ids=settings.admin_ids)
 
@@ -162,17 +168,17 @@ async def main() -> None:
     # Мидлварь: инжектим зависимости
     dp.message.middleware(
         DependencyMiddleware(
-            settings, db, new_account, flood, spam, admin, ml_spam, blocklist
+            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist
         )
     )
     dp.callback_query.middleware(
         DependencyMiddleware(
-            settings, db, new_account, flood, spam, admin, ml_spam, blocklist
+            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist
         )
     )
     dp.chat_member.middleware(
         DependencyMiddleware(
-            settings, db, new_account, flood, spam, admin, ml_spam, blocklist
+            settings, db, new_account, flood, duplicate, spam, admin, ml_spam, blocklist
         )
     )
 

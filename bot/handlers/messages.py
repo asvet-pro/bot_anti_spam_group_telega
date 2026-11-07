@@ -67,6 +67,7 @@ async def on_message(
     settings: Settings,
     db: Database,
     flood: FloodCheck,
+    duplicate: DuplicateCheck,
     spam: SpamFilter,
     admin: AdminFilter,
     ml_spam: MLSpamCheck,
@@ -158,7 +159,26 @@ async def on_message(
             await _delete_and_notify(message, db, user_id, reason)
             return
 
-    # 5) Антифлуд: сообщение удаляем, но НЕ баним автоматически —
+    # 5) Дубликаты: одно и то же сообщение подряд.
+    #    Самый частый вид спама — «реклама», продублированная 10 раз.
+    #    Антифлуд это не ловит (5 одинаковых сообщений = ровно лимит).
+    dup_hit, dup_count = await duplicate.is_duplicate(
+        user_id, message.chat.id, payload
+    )
+    if dup_hit:
+        reason = f"повтор сообщения ({dup_count}x)"
+        logger.info(
+            "Duplicate delete user=%s count=%s text=%r",
+            user_id, dup_count, payload[:120],
+        )
+        if await _maybe_review(
+            message, bot, db, settings, user_id, payload, reason, kind="duplicate",
+        ):
+            return
+        await _delete_and_notify(message, db, user_id, reason)
+        return
+
+    # 6) Антифлуд: сообщение удаляем, но НЕ баним автоматически —
     #    единственный работающий фильтр не должен резать живых людей.
     count = await flood.check(user_id, message.chat.id)
     if flood.is_flood(count):

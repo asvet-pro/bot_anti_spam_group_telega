@@ -47,6 +47,20 @@ CREATE TABLE IF NOT EXISTS flood_log (
 CREATE INDEX IF NOT EXISTS idx_flood_user_time
     ON flood_log(user_id, chat_id, ts);
 
+-- Последние сообщения пользователя — для детектора дубликатов.
+-- Храним хэш текста, а не сам текст: этого хватает, чтобы понять,
+-- что автор повторяет одно и то же.
+CREATE TABLE IF NOT EXISTS recent_messages (
+    user_id    INTEGER NOT NULL,
+    chat_id    INTEGER NOT NULL,
+    ts         REAL    NOT NULL,
+    text_hash  TEXT    NOT NULL,
+    text_len   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_recent_user_time
+    ON recent_messages(user_id, chat_id, ts);
+
 CREATE TABLE IF NOT EXISTS whitelist (
     user_id INTEGER PRIMARY KEY
 );
@@ -280,6 +294,54 @@ class Database:
             await db.execute(
                 "DELETE FROM flood_log WHERE chat_id = ? AND ts < ?",
                 (chat_id, cutoff),
+            )
+            await db.commit()
+
+    # ---------- дубликаты (повтор одного и того же сообщения) ----------
+
+    async def count_repeats(
+        self,
+        user_id: int,
+        chat_id: int,
+        text_hash: str,
+        window_seconds: int,
+        now: float | None = None,
+    ) -> int:
+        """Сколько раз за окно пользователь отправил текст с таким хэшем.
+
+        Считаем ТОЛЬКО совпадения по хэшу (нормализованному тексту),
+        то есть реально одинаковые сообщения.
+        """
+        now = now or time.time()
+        async with aiosqlite.connect(self.path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM recent_messages "
+                "WHERE user_id = ? AND chat_id = ? AND text_hash = ? AND ts >= ?",
+                (user_id, chat_id, text_hash, now - window_seconds),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0]) if row else 0
+
+    async def record_message_hash(
+        self,
+        user_id: int,
+        chat_id: int,
+        text_hash: str,
+        text_len: int,
+        now: float | None = None,
+    ) -> None:
+        """Запоминает хэш сообщения для последующего подсчёта повторов."""
+        now = now or time.time()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO recent_messages"
+                "(user_id, chat_id, ts, text_hash, text_len) VALUES (?, ?, ?, ?, ?)",
+                (user_id, chat_id, now, text_hash, text_len),
+            )
+            # Подрезаем историю, чтобы таблица не росла бесконечно.
+            await db.execute(
+                "DELETE FROM recent_messages WHERE chat_id = ? AND ts < ?",
+                (chat_id, now - 3600.0),
             )
             await db.commit()
 
