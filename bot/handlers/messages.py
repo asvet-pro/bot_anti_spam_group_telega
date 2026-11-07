@@ -261,9 +261,34 @@ async def _notify_admin(
     from bot.handlers.review import review_keyboard
 
     # Дедупликация: если этот автор уже присылал такое же уведомление
-    # недавно — не шлём снова (чтобы личка не засорялась сериями).
-    if await db.was_recently_notified(user_id, chat_id, payload):
-        logger.info("Review notification skipped (duplicate series): %s", user_id)
+    # недавно — не шлём второе, а ОБНОВЛЯЕМ предыдущее (счётчик серии
+    # растёт). Так личка не засоряется, но видно масштаб.
+    # Сами сообщения не теряются: лежат в pending_review и видны в /reports.
+    series_count, notice_id = await db.get_notification(user_id, chat_id, payload)
+    if series_count:
+        await db.bump_notification_count(user_id, chat_id, payload)
+        new_count = series_count + 1
+        logger.info(
+            "Review notification deduplicated (series=%s): user=%s",
+            new_count, user_id,
+        )
+        # Обновляем заголовок прошлого уведомления, если знаем его id.
+        if notice_id:
+            for admin_id in settings.admin_ids:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=admin_id,
+                        message_id=notice_id,
+                        text=texts.REVIEW_HEADER.format(
+                            user_id=user_id,
+                            reason=reason,
+                            action_text=texts.ACTION_LABELS.get(action, action),
+                            text=_truncate(payload),
+                            count_hint=f" ({new_count} одинаковых подряд)",
+                        ),
+                    )
+                except TelegramAPIError:
+                    pass
         return
 
     state = {
@@ -276,15 +301,18 @@ async def _notify_admin(
         reason=reason,
         action_text=texts.ACTION_LABELS.get(action, action),
         text=_truncate(payload),
+        count_hint="",
     )
     for admin_id in settings.admin_ids:
         try:
-            await bot.send_message(
+            sent = await bot.send_message(
                 admin_id,
                 text,
                 reply_markup=review_keyboard(msg_id, hint, state),
             )
-            await db.mark_notified(user_id, chat_id, payload)
+            await db.mark_notified(
+                user_id, chat_id, payload, notice_id=sent.message_id
+            )
         except TelegramAPIError as e:
             logger.warning("Не удалось отправить уведомление админу %s: %s", admin_id, e)
 

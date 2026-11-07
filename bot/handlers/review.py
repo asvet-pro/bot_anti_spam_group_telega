@@ -98,14 +98,20 @@ async def on_review(
     user_id = pending["user_id"]
     chat_id = pending["chat_id"]
 
-    # --- ✅ Ок: оставляем, помечаем как норма ---
+    # --- ✅ Ок: оставляем, помечаем как норма, И СНИМАЕМ бан 24ч ---
+    # Бот уже забанил автора на 24 часа автоматически. Если админ
+    # говорит «это не спам» — бан надо снять, иначе живой человек
+    # остаётся заблокирован на сутки.
     if action == "ok":
         await db.resolve_pending_review(msg_id, verdict="ok")
         await db.inc("reviews_ok")
+        if await db.is_banned(user_id, chat_id):
+            await moderation.unban_user(callback.bot, user_id, chat_id)
+            await db.inc("unbans")
         await callback.message.edit_text(
             _footer(callback, texts.REVIEW_DONE_OK)
         )
-        await callback.answer("Отмечено: ок")
+        await callback.answer("Отмечено: ок, бан снят")
         return
 
     # --- 🚫 Спам: удаляем (если ещё не удалено) + помечаем как спам ---

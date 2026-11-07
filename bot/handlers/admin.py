@@ -178,6 +178,33 @@ async def cmd_reports(
     await message.reply("\n".join(lines))
 
 
+@router.message(Command("pending"))
+async def cmd_pending(
+    message: types.Message, db: Database, admin: AdminFilter,
+) -> None:
+    """Показать сообщения, ожидающие разметки (в т.ч. от серий).
+
+    Нужно, когда серия одинаковых сообщений пришла одним уведомлением:
+    остальные экземпляры ждут здесь.
+    """
+    if not _is_admin(message, admin):
+        return
+    pending = await db.list_pending_reviews(limit=10)
+    if not pending:
+        await message.reply(texts.PENDING_EMPTY)
+        return
+
+    lines = [texts.PENDING_HEADER.format(count=len(pending))]
+    for p in pending:
+        snippet = (p["text"] or "")[:100].replace("\n", " ")
+        lines.append(
+            f"<code>{p['msg_id']}</code> · <code>{p['user_id']}</code>: {snippet}"
+        )
+    lines.append("")
+    lines.append(texts.PENDING_HINT)
+    await message.reply("\n".join(lines))
+
+
 @router.message(Command("id"))
 async def cmd_id(
     message: types.Message, settings: Settings, admin: AdminFilter,

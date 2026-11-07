@@ -119,12 +119,14 @@ CREATE TABLE IF NOT EXISTS pending_review (
 
 -- Дедупликация уведомлений: не шлём админу серию одинаковых сообщений
 -- от одного автора (чтобы личка не засорялась десятками одинаковых
--- уведомлений).
+-- уведомлений). Вместо второго уведомления повышается счётчик.
 CREATE TABLE IF NOT EXISTS notified (
     user_id   INTEGER NOT NULL,
     chat_id   INTEGER NOT NULL,
     text_hash TEXT    NOT NULL,
     ts        REAL    NOT NULL,
+    count     INTEGER NOT NULL DEFAULT 1,
+    notice_id INTEGER,
     PRIMARY KEY (user_id, chat_id, text_hash)
 );
 
@@ -553,19 +555,60 @@ class Database:
 
     async def mark_notified(
         self, user_id: int, chat_id: int, text: str,
+        notice_id: int | None = None,
     ) -> None:
         """Помечает, что уведомление про этот текст отправлено."""
         h = _text_hash(text)
         now = time.time()
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT OR REPLACE INTO notified(user_id, chat_id, text_hash, ts) "
-                "VALUES (?, ?, ?, ?)",
-                (user_id, chat_id, h, now),
+                "INSERT OR REPLACE INTO notified"
+                "(user_id, chat_id, text_hash, ts, count, notice_id) "
+                "VALUES (?, ?, ?, ?, 1, ?)",
+                (user_id, chat_id, h, now, notice_id),
             )
             # Подрезаем старые записи.
             await db.execute("DELETE FROM notified WHERE ts < ?", (now - 3600.0,))
             await db.commit()
+
+    async def bump_notification_count(
+        self, user_id: int, chat_id: int, text: str,
+    ) -> int:
+        """Увеличивает счётчик серии одинаковых уведомлений.
+
+        Возвращает новое значение счётчика.
+        """
+        h = _text_hash(text)
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE notified SET count = count + 1, ts = ? "
+                "WHERE user_id = ? AND chat_id = ? AND text_hash = ?",
+                (time.time(), user_id, chat_id, h),
+            )
+            async with db.execute(
+                "SELECT count FROM notified "
+                "WHERE user_id = ? AND chat_id = ? AND text_hash = ?",
+                (user_id, chat_id, h),
+            ) as cur:
+                row = await cur.fetchone()
+                await db.commit()
+                return int(row[0]) if row else 0
+
+    async def get_notification(
+        self, user_id: int, chat_id: int, text: str,
+    ) -> tuple[int, int | None]:
+        """(счётчик, id уведомления) для серии одинаковых сообщений."""
+        h = _text_hash(text)
+        async with aiosqlite.connect(self.path) as db:
+            async with db.execute(
+                "SELECT count, notice_id FROM notified "
+                "WHERE user_id = ? AND chat_id = ? AND text_hash = ?",
+                (user_id, chat_id, h),
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return 0, None
+                return int(row[0]), row[1]
 
     # ---------- deleted messages ----------
 
@@ -599,6 +642,27 @@ class Database:
             )
             await db.commit()
             return cur.rowcount > 0
+
+    async def list_pending_reviews(self, limit: int = 10) -> list[dict]:
+        """Сообщения, ожидающие разметки (в т.ч. остальные экземпляры серии)."""
+        async with aiosqlite.connect(self.path) as db:
+            async with db.execute(
+                "SELECT msg_id, user_id, chat_id, text, reason, blocklist_hint "
+                "FROM pending_review ORDER BY created DESC LIMIT ?",
+                (limit,),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [
+                    {
+                        "msg_id": r[0],
+                        "user_id": r[1],
+                        "chat_id": r[2],
+                        "text": r[3],
+                        "reason": r[4],
+                        "blocklist_hint": r[5],
+                    }
+                    for r in rows
+                ]
 
     async def get_pending_review(self, msg_id: int) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
