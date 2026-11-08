@@ -27,8 +27,11 @@ from bot.text_normalizer import normalize_for_ml
 logger = logging.getLogger(__name__)
 
 
-# Максимальная длина в токенах. 128 хватает для чат-сообщений.
-DEFAULT_MAX_LENGTH = 128
+# Максимальная длина в токенах.
+# 256 — как обучалась RUSpam/spam_deberta_v4 (в README модели max_length=256).
+# Для коротких спам-сообщений разницы нет, но на длинных текстах 256
+# даёт более точный результат.
+DEFAULT_MAX_LENGTH = 256
 
 
 @dataclass(slots=True)
