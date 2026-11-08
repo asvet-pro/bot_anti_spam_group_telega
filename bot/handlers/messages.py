@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 
 from aiogram import Bot, F, Router, types
@@ -77,25 +78,10 @@ async def on_message(
 
     payload = message.text or message.caption or ""
 
-    # 1) ML-фильтр (самое «умное» — сначала). Токсичность — удаляем без бана.
-    if ml_spam.enabled:
-        ml_hit, ml_pred = await asyncio.to_thread(ml_spam.is_spam, payload)
-        if ml_hit and ml_pred is not None:
-            top_label, top_score = max(
-                ml_pred.all_scores.items(), key=lambda kv: kv[1]
-            )
-            reason = f"ML {top_label}={top_score:.2f}"
-            logger.info(
-                "ML hit user=%s label=%s score=%.3f text=%r",
-                user_id, top_label, top_score, payload[:200],
-            )
-            await _handle_spam(
-                message, bot, db, settings, moderation, user_id, payload,
-                reason, kind="ml", action="delete_only",
-            )
-            return
-
-    # 2) Управляемый стоп-лист: слова.
+    # 1) Управляемый стоп-лист: слова.
+    #    Дешёвое и точное правило — проверяем первым: так кнопка
+    #    «В стоп-лист» появляется чаще, а ML не тратит время, если
+    #    сообщение уже поймано стоп-словом.
     word_hit = await blocklist.match_word(payload)
     if word_hit:
         reason = f'стоп-слово «{word_hit}»'
@@ -109,7 +95,7 @@ async def on_message(
         )
         return
 
-    # 3) Управляемый стоп-лист: regex.
+    # 2) Управляемый стоп-лист: regex.
     pattern_hit = await blocklist.match_pattern(payload)
     if pattern_hit:
         reason = f"стоп-regex `{pattern_hit.pattern}`"
@@ -124,7 +110,7 @@ async def on_message(
         )
         return
 
-    # 4) Legacy BANNED_PATTERNS из .env (жёсткий список рекламы).
+    # 3) Legacy BANNED_PATTERNS из .env (жёсткий список рекламы).
     if spam.enabled:
         hit = spam.match(payload)
         if hit:
@@ -136,6 +122,29 @@ async def on_message(
             await _handle_spam(
                 message, bot, db, settings, moderation, user_id, payload,
                 reason, kind="legacy", action="temp_ban", hint=hit.pattern,
+            )
+            return
+
+    # 4) ML-фильтр спама. Идёт ПОСЛЕ стоп-листа: правила дешевле и
+    #    точнее, а модель — тяжёлый inference на каждое сообщение.
+    #    Токсичность/спам — удаляем без бана.
+    if ml_spam.enabled:
+        ml_hit, ml_pred = await asyncio.to_thread(ml_spam.is_spam, payload)
+        if ml_hit and ml_pred is not None:
+            top_label, top_score = max(
+                ml_pred.all_scores.items(), key=lambda kv: kv[1]
+            )
+            reason = f"ML {top_label}={top_score:.2f}"
+            logger.info(
+                "ML hit user=%s label=%s score=%.3f text=%r",
+                user_id, top_label, top_score, payload[:200],
+            )
+            # Подбираем ключевое слово, чтобы кнопка «В стоп-лист»
+            # появлялась и для ML-спама.
+            await _handle_spam(
+                message, bot, db, settings, moderation, user_id, payload,
+                reason, kind="ml", action="delete_only",
+                hint=guess_spam_pattern(payload),
             )
             return
 
@@ -326,3 +335,124 @@ def _truncate(text: str, limit: int = 800) -> str:
             .replace("<", "&lt;")
             .replace(">", "&gt;")
     )
+
+
+# Слова, которые описывают действие, а не суть предложения — они частые
+# в любом рекламном тексте, но бесполезны как стоп-слово.
+_NON_MARKER_WORDS = {
+    "пиши", "пишите", "напиши", "напишите", "встречаемся",
+    "присоединяйтесь", "вступай", "вступайте", "подписывайся",
+    "подпишитесь", "пишем", "делаем", "создаём", "создаем", "продам",
+    "продаю", "продаём", "продаем", "предлагаю", "предлагаем", "ищу",
+    "ищем", "нужен", "нужна", "нужны", "беру", "берём", "берем",
+    "работа", "работу", "работать", "доход", "дохода", "деньги",
+    "денег", "прибыль", "свободный", "свободна", "свободны", "всегда",
+    "только", "уже", "ещё", "еще", "очень", "быстро", "легко",
+    "просто", "сейчас", "тут", "здесь", "мне", "тебе", "вам", "нам",
+    "вас", "них", "него", "нее", "это", "как", "что", "все", "всё",
+    "для", "или", "не", "нет", "да", "же", "бы", "быть", "есть",
+    # слишком общие — как стоп-слово бесполезны
+    "набор", "команда", "помогу", "поможем", "помогите", "у нас",
+    "много", "мало", "хорошо", "плохо", "также", "оно", "всё", "вам",
+    "курс", "обучение", "занятие", "занятия", "учимся", "учиться",
+}
+
+# Окончания, по которым отсекаем слишком общие слова в любом падеже.
+# Слово считается бесполезным, если заканчивается на один из них И
+# его основа короткая (менее 8 символов) — иначе потеряем «подписчиками».
+_WEAK_SUFFIXES = ("ами", "ями", "ах", "ях", "ом", "ем", "ов", "ев", "ий", "ый")
+
+
+def _is_weak_marker(word: str) -> bool:
+    """Слишком ли общее слово, чтобы быть стоп-словом."""
+    low = word.lower()
+    if low in _NON_MARKER_WORDS:
+        return True
+    # Короткая основа + «общее» окончание → пропускаем.
+    if len(low) <= 8 and low.endswith(_WEAK_SUFFIXES):
+        return True
+    return False
+
+
+def guess_spam_keyword(text: str) -> str | None:
+    """Подбирает ключевое слово из рекламного сообщения.
+
+    Задача: дать админу конкретное правило для кнопки «В стоп-лист», чтобы
+    он мог одним нажатием закрепить его.
+
+    Логика:
+    - слова короче 4 символов и «служебные» отбрасываем;
+    - из оставшихся выбираем самое длинное слово, написанное с заглавной
+      буквы (обычно это бренд или услуга: «Бинанс», «Promptium»);
+    - если таких нет — берём самое длинное значимое слово.
+
+    Возвращаем слово как есть (в нижнем регистре) — вызывающий код сам
+    построит из него regex с \\w*, чтобы ловились все словоформы:
+    «заработок» / «заработка» / «заработке» — это разные слова, а стоп-
+    слово «заработать» не поймает «заработок».
+
+    Возвращает None, если подобрать нечего.
+    """
+    if not text:
+        return None
+
+    # Слова из текста (латиница и кириллица), длиной от 4.
+    raw = re.findall(r"[A-Za-zА-Яа-яЁё]{4,}", text)
+    if not raw:
+        return None
+
+    # Отбрасываем слова, которые встречаются в рекламе всегда.
+    words = [w for w in raw if not _is_weak_marker(w)]
+    if not words:
+        return None
+
+    # Приоритет: слово с заглавной буквы (бренд/услуга).
+    capitalized = [w for w in words if w[0].isupper()]
+    if capitalized:
+        # Самое длинное из «капитализированных» — вероятный бренд.
+        chosen = max(capitalized, key=len)
+    else:
+        # Иначе — самое длинное слово (обычно самое содержательное).
+        chosen = max(words, key=len)
+
+    return chosen.lower()
+
+
+# Русские окончания, которые отбрасываем, оставляя основу.
+_RU_ENDINGS = (
+    "ами", "ями", "ом", "ем", "ах", "ях", "ев", "ов", "ей", "ой",
+    "ий", "ый", "ая", "яя", "ое", "ее", "ые", "ие", "ок", "ек",
+    "ам", "ям", "ы", "и", "а", "я", "о", "е", "у", "ю", "ь",
+)
+
+# Минимальная длина «ядра» слова, по которому строим regex.
+# По нему ловятся все словоформы: «заработ» + \w* → заработок/заработка/…
+_STEM_CORE_LEN = 6
+
+
+def _word_stem(word: str) -> str:
+    """Возвращает ядро слова — первые N значащих символов.
+
+    «заработком» → «зарабо», «подписками» → «подписк».
+    По ядру строится regex «(?i)ядро\\w*», который ловит все словоформы.
+    """
+    low = word.lower()
+    if len(low) <= _STEM_CORE_LEN:
+        return low
+    return low[:_STEM_CORE_LEN]
+
+
+def guess_spam_pattern(text: str) -> str | None:
+    """Подбирает regex-паттерн для кнопки «В стоп-лист».
+
+    Возвращает готовый паттерн вида «(?i)зарабо\\w*» — он ловит все
+    словоформы («заработок», «заработка», «заработке»). Обычное стоп-слово
+    «заработать» не поймало бы «заработок», а это самый частый вариант.
+    """
+    stem = guess_spam_keyword(text)
+    if not stem:
+        return None
+    core = _word_stem(stem)
+    if len(core) < 4:
+        return None
+    return f"(?i){re.escape(core)}\\w*"
