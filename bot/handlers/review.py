@@ -149,8 +149,14 @@ async def on_review(
 
         added = False
         if hint:
+            # Важно: regex-паттерн должен попасть в СПИСОК РЕГЕКСОВ,
+            # а не в список слов. Иначе он будет искаться как подстрока
+            # «(?i)крипт» и никогда ничего не поймает.
             try:
-                await db.add_word(hint, note="из разметки")
+                if _looks_like_regex(hint):
+                    await db.add_pattern(hint, note="из разметки")
+                else:
+                    await db.add_word(hint, note="из разметки")
                 blocklist.invalidate()
                 added = True
             except Exception as e:  # noqa: BLE001 — IntegrityError и прочее
@@ -201,6 +207,19 @@ async def on_review(
         return
 
     await callback.answer("Неизвестное действие.", show_alert=True)
+
+
+def _looks_like_regex(hint: str) -> bool:
+    """Похоже ли значение на regex-паттерн (а не на обычное слово).
+
+    Признаки: есть метасимволы или флаг (?i).
+    """
+    if not hint:
+        return False
+    if hint.startswith("(?") or "(?i)" in hint:
+        return True
+    # Метасимволы регулярных выражений.
+    return any(ch in hint for ch in r".*+?[]()|^$\{}")
 
 
 async def _try_delete(bot, chat_id: int, msg_id: int) -> bool:
