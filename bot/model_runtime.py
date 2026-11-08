@@ -22,6 +22,8 @@ import numpy as np
 import onnxruntime as ort
 from tokenizers import Tokenizer
 
+from bot.text_normalizer import normalize_for_ml
+
 logger = logging.getLogger(__name__)
 
 
@@ -138,6 +140,10 @@ class MLSpamClassifier:
 
     def predict(self, text: str) -> MLSpamPrediction:
         assert self.tokenizer is not None and self.session is not None
+
+        # Нормализация: модель обучена на нормализованном тексте
+        # (без гомоглифов, разрежённого написания, ссылок и команд ботов).
+        text = normalize_for_ml(text)
 
         # 1) Токенизация
         enc = self.tokenizer.encode(text)

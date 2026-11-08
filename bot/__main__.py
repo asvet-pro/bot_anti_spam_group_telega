@@ -27,6 +27,7 @@ from bot.handlers import admin as admin_handlers
 from bot.handlers import blocklist as blocklist_handlers
 from bot.handlers import captcha as captcha_handlers
 from bot.handlers import help as help_handlers
+from bot.handlers import learn as learn_handlers
 from bot.handlers import messages as messages_handlers
 from bot.handlers import review as review_handlers
 from bot.middlewares.deps import DependencyMiddleware
@@ -190,6 +191,7 @@ async def main() -> None:
     dp.include_router(admin_handlers.router)
     dp.include_router(blocklist_handlers.router)
     dp.include_router(review_handlers.router)
+    dp.include_router(learn_handlers.router)
     dp.include_router(captcha_handlers.router)
     dp.include_router(messages_handlers.router)
 

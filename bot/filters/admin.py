@@ -60,12 +60,19 @@ class AdminFilter:
             return
 
         ids = {a.user.id for a in admins if not a.user.is_bot}
-        self.group_admin_ids = ids
+        # Логируем только при изменении состава — иначе лог засоряется
+        # одинаковой строкой каждые 5 минут.
+        if ids != self.group_admin_ids:
+            self.group_admin_ids = ids
+            logger.info(
+                "Админы чата %s обновлены: %s (из ADMIN_IDS: %s)",
+                chat_id, sorted(ids), self.admin_ids,
+            )
+        else:
+            logger.debug(
+                "Админы чата %s без изменений (%s)", chat_id, sorted(ids)
+            )
         self._loaded_at = time.monotonic()
-        logger.info(
-            "Админы чата %s обновлены: %s (из ADMIN_IDS: %s)",
-            chat_id, sorted(ids), self.admin_ids,
-        )
 
     async def ensure_group_admins(self, bot: Bot, chat_id: int) -> None:
         """Обновляет список админов, если кеш устарел."""

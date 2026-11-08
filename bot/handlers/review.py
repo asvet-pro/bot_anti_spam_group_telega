@@ -115,16 +115,29 @@ async def on_review(
         return
 
     # --- 🚫 Спам: удаляем (если ещё не удалено) + помечаем как спам ---
+    # Размечаем ВСЮ серию одинаковых сообщений: 5 одинаковых = одна
+    # запись в датасете, а не пять. Иначе датасет раздувается
+    # почти-одинаковыми записями и модель на нём хуже обучается.
     if action == "spam":
-        await _try_delete(callback.bot, chat_id, msg_id)
-        await db.log_deleted(msg_id, user_id, chat_id)
-        await db.inc("deleted")
+        series = await db.find_series(msg_id)
+        for item in series:
+            await _try_delete(callback.bot, item["chat_id"], item["msg_id"])
+            await db.log_deleted(item["msg_id"], item["user_id"], item["chat_id"])
+            await db.inc("deleted")
+        # В датасет — одна запись (по первому сообщению серии).
         await db.resolve_pending_review(msg_id, verdict="spam")
         await db.inc("reviews_spam")
-        await callback.message.edit_text(
-            _footer(callback, texts.REVIEW_DONE_SPAM)
+        extra = (
+            f"\n\n<i>Размечена вся серия: {len(series)} сообщений.</i>"
+            if len(series) > 1 else ""
         )
-        await callback.answer("Удалено и помечено как спам")
+        await callback.message.edit_text(
+            _footer(callback, texts.REVIEW_DONE_SPAM) + extra
+        )
+        await callback.answer(
+            "Удалено и помечено как спам"
+            + (f" ({len(series)} шт.)" if len(series) > 1 else "")
+        )
         return
 
     # --- ⏭ В стоп-лист: удаляем + добавляем текст в стоп-лист ---

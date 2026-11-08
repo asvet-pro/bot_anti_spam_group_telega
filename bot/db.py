@@ -112,10 +112,14 @@ CREATE TABLE IF NOT EXISTS pending_review (
     user_id     INTEGER NOT NULL,
     chat_id     INTEGER NOT NULL,
     text        TEXT    NOT NULL,
+    text_hash   TEXT    NOT NULL DEFAULT '',
     reason      TEXT,
     blocklist_hint TEXT,
     created     REAL    NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_pending_series
+    ON pending_review(user_id, chat_id, text_hash);
 
 -- Дедупликация уведомлений: не шлём админу серию одинаковых сообщений
 -- от одного автора (чтобы личка не засорялась десятками одинаковых
@@ -186,6 +190,10 @@ class Database:
         # Безопасность: создаём родительскую папку, если её нет.
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.path) as db:
+            # ВАЖНО: сначала миграции, потом SCHEMA. Иначе CREATE INDEX на
+            # новую колонку упадёт на старой базе (no such column) и бот
+            # не запустится после деплоя.
+            await self._migrate(db)
             await db.executescript(SCHEMA)
             # Инициализируем счётчики по умолчанию
             for key in (
@@ -197,6 +205,37 @@ class Database:
                     "INSERT OR IGNORE INTO stats(key, value) VALUES (?, 0)", (key,)
                 )
             await db.commit()
+
+    @staticmethod
+    async def _migrate(db) -> None:
+        """Добавляет недостающие колонки в существующие таблицы.
+
+        SQLite не умеет ALTER TABLE ADD COLUMN IF NOT EXISTS, поэтому
+        проверяем наличие колонки вручную.
+        """
+        # (таблица, колонка, её определение)
+        new_columns = [
+            ("pending_review", "text_hash", "TEXT NOT NULL DEFAULT ''"),
+            ("notified", "count", "INTEGER NOT NULL DEFAULT 1"),
+            ("notified", "notice_id", "INTEGER"),
+        ]
+        for table, column, definition in new_columns:
+            try:
+                async with db.execute(
+                    f"PRAGMA table_info({table})"
+                ) as cur:
+                    rows = await cur.fetchall()
+            except Exception:  # noqa: BLE001 — таблицы может не быть
+                continue
+
+            if not rows:
+                continue  # таблицы ещё нет — создастся из SCHEMA
+            if any(r[1] == column for r in rows):
+                continue  # колонка уже есть
+
+            await db.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
 
     # ---------- captcha ----------
 
@@ -636,9 +675,13 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             cur = await db.execute(
                 "INSERT OR IGNORE INTO pending_review"
-                "(msg_id, user_id, chat_id, text, reason, blocklist_hint, created) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (msg_id, user_id, chat_id, text, reason, blocklist_hint, time.time()),
+                "(msg_id, user_id, chat_id, text, text_hash, reason, "
+                " blocklist_hint, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    msg_id, user_id, chat_id, text, _text_hash(text),
+                    reason, blocklist_hint, time.time(),
+                ),
             )
             await db.commit()
             return cur.rowcount > 0
@@ -660,6 +703,39 @@ class Database:
                         "text": r[3],
                         "reason": r[4],
                         "blocklist_hint": r[5],
+                    }
+                    for r in rows
+                ]
+
+    async def find_series(self, msg_id: int) -> list[dict]:
+        """Все сообщения той же серии (тот же автор, тот же текст).
+
+        Серия — сообщения одного автора с одинаковым нормализованным
+        текстом, ожидающие разметки. Используется, чтобы кнопка
+        «🚫 Спам» размечала всю серию, а в датасет попадала одна запись.
+        """
+        target = await self.get_pending_review(msg_id)
+        if target is None:
+            return []
+        h = _text_hash(target["text"])
+        author_id = target["user_id"]
+        chat_id = target["chat_id"]
+        async with aiosqlite.connect(self.path) as db:
+            async with db.execute(
+                "SELECT msg_id, user_id, chat_id, text, reason "
+                "FROM pending_review "
+                "WHERE user_id = ? AND chat_id = ? AND text_hash = ? "
+                "ORDER BY created",
+                (author_id, chat_id, h),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [
+                    {
+                        "msg_id": r[0],
+                        "user_id": r[1],
+                        "chat_id": r[2],
+                        "text": r[3],
+                        "reason": r[4],
                     }
                     for r in rows
                 ]

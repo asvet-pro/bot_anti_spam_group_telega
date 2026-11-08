@@ -119,13 +119,17 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
 
     # --- ML ---
     ml_enabled = _bool(os.getenv("ML_ENABLED", "true"), default=True)
-    ml_model_dir = Path(os.getenv("ML_MODEL_DIR", "./models/rubert-tiny-toxicity")).resolve()
+    ml_model_dir = Path(
+        os.getenv("ML_MODEL_DIR", "./models/rubert-spam-deberta")
+    ).resolve()
     try:
         ml_threshold = float(os.getenv("ML_THRESHOLD", "0.6"))
     except ValueError:
         ml_threshold = 0.6
     if not 0.0 <= ml_threshold <= 1.0:
         ml_threshold = 0.6
+    # Метки «плохие». По умолчанию берём из набора DEFAULT_BAD_LABELS
+    # (там есть и 'spam' для детектора спама, и токсичные метки).
     ml_bad_labels = _str_list(os.getenv("ML_BAD_LABELS", ""))
 
     return Settings(

@@ -1,36 +1,49 @@
-"""ML-фильтр токсичности/спама через ONNX.
+"""ML-фильтр спама/токсичности через ONNX.
 
 Поведение:
 - Загружает модель через bot.model_runtime.MLSpamClassifier.
 - Решающее правило: max(scores[bad_labels]) >= threshold,
-  где bad_labels — список меток, которые считаем «плохими»
-  (toxic, insult, threat, dangerous и т.п.).
+  где bad_labels — список меток, которые считаем «плохими».
 - enabled=False, если модель не загрузилась (например, нет .onnx
   на диске). Тогда хендлер messages.py молча пропускает этот фильтр.
+
+Модели:
+- RUSpam/spam_deberta_v4 (по умолчанию) — детектор СПАМА для русских
+  сообщений, метки ['not-spam', 'spam']. Ловит рекламу услуг, «заработок»,
+  набор в команду и т.п.
+- cointegrated/rubert-tiny-toxicity — детектор ТОКСИЧНОСТИ, метки
+  ['non-toxic', 'insult', 'obscenity', 'threat', 'dangerous'].
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable
 
 from bot.model_runtime import MLSpamClassifier, MLSpamPrediction
 
 logger = logging.getLogger(__name__)
 
 
-# Метки, по которым решаем «плохое/не плохое». Модель
-# rubert-tiny-toxicity выдаёт: non-toxic, insult, obscenity, threat, dangerous.
-# Берём все, кроме non-toxic — то есть считаем, что «токсичность» это всё,
-# что модель НЕ назвала non-toxic.
+# Метки, которые считаем «плохими» по умолчанию.
+#
+# Для детектора спама (RUSpam) плохая метка одна — 'spam'.
+# Для детектора токсичности (rubert-tiny-toxicity) — все, кроме non-toxic.
 DEFAULT_BAD_LABELS = (
+    "spam",
     "insult",
     "obscenity",
     "threat",
     "dangerous",
     "toxic",
     "hate",
+)
+
+# Метки, которые НИКОГДА не считаем плохими (точно «не спам»).
+SAFE_LABELS = (
+    "non-toxic",
+    "not-spam",
+    "neutral",
+    "safe",
 )
 
 
@@ -47,20 +60,20 @@ class MLSpamCheck:
         return self.classifier is not None
 
     def _bad_score(self, pred: MLSpamPrediction) -> float:
-        """Возвращает максимальную вероятность среди bad_labels.
+        """Возвращает максимальную вероятность среди плохих меток.
 
-        Если каких-то меток нет в выдаче — пропускаем. Если ВСЕ нужные
-        метки отсутствуют — берём 1 - non-toxic_score (всё, что модель
-        не назвала «безопасным»).
+        Если ни одной плохой метки нет в выдаче модели — считаем, что
+        сообщение безопасное (0.0), а не «1 минус non-toxic». Иначе
+        детектор спама, у которого в выдаче только spam/not-spam, считал бы
+        любое нормальное сообщение подозрительным.
         """
         scores = pred.all_scores
-        bad_present = [scores[lbl] for lbl in self.bad_labels if lbl in scores]
+        bad_present = [
+            scores[lbl] for lbl in self.bad_labels
+            if lbl in scores and lbl not in SAFE_LABELS
+        ]
         if bad_present:
             return max(bad_present)
-        # Фолбэк для моделей с неожиданным набором меток
-        non_toxic = scores.get("non-toxic", scores.get("neutral"))
-        if non_toxic is not None:
-            return 1.0 - non_toxic
         return 0.0
 
     def is_spam(self, text: str) -> tuple[bool, MLSpamPrediction | None]:
